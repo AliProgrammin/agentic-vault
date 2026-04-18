@@ -1,0 +1,447 @@
+// http_request — MCP tool with secret injection.
+//
+// Injects named secrets from the vault into HTTP headers or query params
+// at request time, enforcing each secret's policy (host allowlist) and
+// rate limit, then scrubbing the response body against every in-scope
+// secret before returning it to the agent.
+//
+// Any policy deny, rate-limit deny, timeout, or missing secret aborts
+// the entire request with a typed error code. Scrubbing of the response
+// is defense-in-depth for accidental leakage — not an anti-exfiltration
+// control; the real anti-exfil boundary is the policy layer (Feature 4).
+//
+// The Zod input schema adds a `name` field to each `inject` entry
+// (beyond the brief's `{ secret, into, template }` triple) because the
+// brief's example template `"Bearer {{value}}"` is value-only and
+// carries no destination name: a header injection must know which
+// header name to set, and a query injection must know which query
+// parameter name to append. The deviation is intentional.
+//
+// An `inject` array with at least one entry is required: without any
+// injection, the tool would be a policy-free generic HTTP client,
+// contradicting the deny-by-default posture of SecretProxy.
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+import {
+  createRequestId,
+  type AuditErrorCode,
+  type AuditEvent,
+  type AuditLogger,
+} from "../audit/index.js";
+import { checkHttp, policySchema, type Policy } from "../policy/index.js";
+import type { RateLimiter } from "../ratelimit/index.js";
+import { listMerged, resolveSecret } from "../scope/index.js";
+import { scrub as defaultScrub, type ScrubbableSecret } from "../scrub/index.js";
+import type { McpServerDeps } from "./server.js";
+
+export interface HttpRequestDeps extends McpServerDeps {
+  readonly audit: AuditLogger;
+  readonly rateLimiter: RateLimiter;
+  readonly scrub?: typeof defaultScrub;
+  readonly fetch?: typeof fetch;
+  readonly requestTimeoutMs?: number;
+  readonly clock?: () => number;
+}
+
+const TOOL_NAME = "http_request";
+const RESPONSE_BODY_CAP_BYTES = 10 * 1024 * 1024;
+const DEFAULT_TIMEOUT_MS = 60_000;
+
+const HTTP_METHODS = [
+  "GET",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "HEAD",
+  "OPTIONS",
+] as const;
+
+const PLACEHOLDER_SCAN = /\{\{([^}]*)\}\}/g;
+
+function templateUsesOnlyValuePlaceholder(template: string): boolean {
+  const matches = template.matchAll(PLACEHOLDER_SCAN);
+  for (const m of matches) {
+    if (m[1] !== "value") {
+      return false;
+    }
+  }
+  return true;
+}
+
+const injectEntrySchema = z
+  .object({
+    secret: z.string().min(1, { message: "secret name must not be empty" }),
+    into: z.enum(["header", "query"]),
+    name: z
+      .string()
+      .min(1, { message: "injection target name must not be empty" }),
+    template: z.string().refine(templateUsesOnlyValuePlaceholder, {
+      message: "template must use only {{value}} as a placeholder",
+    }),
+  })
+  .strict();
+
+export const HTTP_REQUEST_INPUT_SHAPE = {
+  url: z.string().min(1, { message: "url must not be empty" }),
+  method: z.enum(HTTP_METHODS),
+  headers: z.record(z.string()).optional(),
+  body: z.string().optional(),
+  inject: z
+    .array(injectEntrySchema)
+    .min(1, { message: "inject must contain at least one entry" }),
+} as const;
+
+export const httpRequestInputSchema = z
+  .object(HTTP_REQUEST_INPUT_SHAPE)
+  .strict();
+
+export type HttpRequestInput = z.infer<typeof httpRequestInputSchema>;
+
+export interface HttpRequestOk {
+  status: "ok";
+  http_status: number;
+  headers: Record<string, string>;
+  body: string;
+  truncated: boolean;
+}
+
+export interface HttpRequestError {
+  status: "error";
+  code: AuditErrorCode;
+  reason: string;
+  secret_name?: string;
+  retry_after_seconds?: number;
+}
+
+export type HttpRequestResult = HttpRequestOk | HttpRequestError;
+
+interface PreparedInjection {
+  secretName: string;
+  value: string;
+  into: "header" | "query";
+  name: string;
+  template: string;
+}
+
+function buildEvent(
+  base: {
+    requestId: string;
+    callerCwd: string;
+    secretName: string;
+    target: string;
+    outcome: "allowed" | "denied";
+  },
+  extra: { code?: AuditErrorCode; reason?: string },
+): AuditEvent {
+  const event: AuditEvent = {
+    ts: new Date().toISOString(),
+    secret_name: base.secretName,
+    tool: TOOL_NAME,
+    target: base.target,
+    outcome: base.outcome,
+    request_id: base.requestId,
+    caller_cwd: base.callerCwd,
+    ...(extra.code !== undefined ? { code: extra.code } : {}),
+    ...(extra.reason !== undefined ? { reason: extra.reason } : {}),
+  };
+  return event;
+}
+
+async function readCappedBody(
+  response: Response,
+  cap: number,
+): Promise<{ bytes: Uint8Array; truncated: boolean }> {
+  if (!response.body) {
+    const buf = new Uint8Array(await response.arrayBuffer());
+    if (buf.byteLength > cap) {
+      return { bytes: buf.subarray(0, cap), truncated: true };
+    }
+    return { bytes: buf, truncated: false };
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let truncated = false;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) {
+      break;
+    }
+    if (!value) {
+      continue;
+    }
+    const remaining = cap - total;
+    if (value.byteLength > remaining) {
+      if (remaining > 0) {
+        chunks.push(value.subarray(0, remaining));
+        total += remaining;
+      }
+      truncated = true;
+      await reader.cancel();
+      break;
+    }
+    chunks.push(value);
+    total += value.byteLength;
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    bytes.set(c, offset);
+    offset += c.byteLength;
+  }
+  return { bytes, truncated };
+}
+
+export async function runHttpRequest(
+  input: HttpRequestInput,
+  deps: HttpRequestDeps,
+): Promise<HttpRequestResult> {
+  const scrubFn = deps.scrub ?? defaultScrub;
+  const fetchImpl: typeof fetch =
+    deps.fetch ?? globalThis.fetch.bind(globalThis);
+  const timeoutMs = deps.requestTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const requestId = createRequestId();
+  const callerCwd = process.cwd();
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(input.url);
+  } catch {
+    return {
+      status: "error",
+      code: "INVALID_INJECTION",
+      reason: `url '${input.url}' could not be parsed`,
+    };
+  }
+  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+    return {
+      status: "error",
+      code: "INVALID_INJECTION",
+      reason: `scheme '${parsedUrl.protocol.replace(/:$/, "")}' is not http or https`,
+    };
+  }
+
+  const target = parsedUrl.hostname;
+
+  const recordAudit = async (
+    secretName: string,
+    outcome: "allowed" | "denied",
+    extra: { code?: AuditErrorCode; reason?: string } = {},
+  ): Promise<void> => {
+    await deps.audit.record(
+      buildEvent(
+        { requestId, callerCwd, secretName, target, outcome },
+        extra,
+      ),
+    );
+  };
+
+  const prepared: PreparedInjection[] = [];
+
+  for (const inj of input.inject) {
+    const resolved = resolveSecret(inj.secret, deps.sources);
+    if (!resolved) {
+      const reason = `secret '${inj.secret}' not found in any scope`;
+      await recordAudit(inj.secret, "denied", {
+        code: "SECRET_NOT_FOUND",
+        reason,
+      });
+      return {
+        status: "error",
+        code: "SECRET_NOT_FOUND",
+        reason,
+        secret_name: inj.secret,
+      };
+    }
+
+    const policyParse = policySchema.safeParse(resolved.policy);
+    const policy: Policy | undefined = policyParse.success
+      ? policyParse.data
+      : undefined;
+
+    const httpDecision = checkHttp(policy, input.url);
+    if (!httpDecision.allowed) {
+      await recordAudit(inj.secret, "denied", {
+        code: "POLICY_DENIED",
+        reason: httpDecision.reason,
+      });
+      return {
+        status: "error",
+        code: "POLICY_DENIED",
+        reason: httpDecision.reason,
+        secret_name: inj.secret,
+      };
+    }
+
+    if (!policy) {
+      // Unreachable — checkHttp denies when policy is undefined — but this
+      // keeps TypeScript narrow for the rate-limit call below.
+      const reason = "no policy attached to secret";
+      await recordAudit(inj.secret, "denied", {
+        code: "POLICY_DENIED",
+        reason,
+      });
+      return {
+        status: "error",
+        code: "POLICY_DENIED",
+        reason,
+        secret_name: inj.secret,
+      };
+    }
+
+    const rateDecision = await deps.rateLimiter.tryConsume(inj.secret, policy);
+    if (!rateDecision.allowed) {
+      const reason = `rate limit exceeded for secret '${inj.secret}' (retry after ${String(rateDecision.retry_after_seconds)}s)`;
+      await recordAudit(inj.secret, "denied", {
+        code: "RATE_LIMITED",
+        reason,
+      });
+      return {
+        status: "error",
+        code: "RATE_LIMITED",
+        reason,
+        secret_name: inj.secret,
+        retry_after_seconds: rateDecision.retry_after_seconds,
+      };
+    }
+
+    prepared.push({
+      secretName: inj.secret,
+      value: resolved.value,
+      into: inj.into,
+      name: inj.name,
+      template: inj.template,
+    });
+  }
+
+  const finalHeaders = new Headers();
+  if (input.headers) {
+    for (const [k, v] of Object.entries(input.headers)) {
+      finalHeaders.set(k, v);
+    }
+  }
+  const finalUrl = new URL(parsedUrl.toString());
+  for (const p of prepared) {
+    const rendered = p.template.split("{{value}}").join(p.value);
+    if (p.into === "header") {
+      finalHeaders.set(p.name, rendered);
+    } else {
+      finalUrl.searchParams.append(p.name, rendered);
+    }
+  }
+
+  const scrubSecrets: ScrubbableSecret[] = [];
+  for (const entry of listMerged(deps.sources)) {
+    const r = resolveSecret(entry.name, deps.sources);
+    if (r) {
+      scrubSecrets.push({ name: r.name, value: r.value });
+    }
+  }
+
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+  let response: Response;
+  try {
+    const init: RequestInit = {
+      method: input.method,
+      headers: finalHeaders,
+      signal: controller.signal,
+    };
+    if (
+      input.body !== undefined &&
+      input.method !== "GET" &&
+      input.method !== "HEAD"
+    ) {
+      (init as { body?: string }).body = input.body;
+    }
+    response = await fetchImpl(finalUrl.toString(), init);
+  } catch (err) {
+    clearTimeout(timeoutHandle);
+    if (controller.signal.aborted) {
+      const reason = `request exceeded ${String(timeoutMs)}ms timeout`;
+      for (const p of prepared) {
+        await recordAudit(p.secretName, "denied", {
+          code: "TIMEOUT",
+          reason,
+        });
+      }
+      return {
+        status: "error",
+        code: "TIMEOUT",
+        reason,
+      };
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    for (const p of prepared) {
+      await recordAudit(p.secretName, "denied", {
+        code: "POLICY_DENIED",
+        reason: `fetch failed: ${message}`,
+      });
+    }
+    return {
+      status: "error",
+      code: "POLICY_DENIED",
+      reason: `fetch failed: ${message}`,
+    };
+  }
+  clearTimeout(timeoutHandle);
+
+  const { bytes, truncated } = await readCappedBody(
+    response,
+    RESPONSE_BODY_CAP_BYTES,
+  );
+  const rawBody = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  const scrubbedBody = scrubFn(rawBody, scrubSecrets);
+
+  const scrubbedHeaders: Record<string, string> = {};
+  for (const [k, v] of response.headers.entries()) {
+    const scrubbedName = scrubFn(k, scrubSecrets);
+    scrubbedHeaders[scrubbedName] = scrubFn(v, scrubSecrets);
+  }
+
+  for (const p of prepared) {
+    await recordAudit(p.secretName, "allowed");
+  }
+  if (truncated) {
+    const annotationSecret = prepared[0];
+    if (annotationSecret) {
+      await recordAudit(annotationSecret.secretName, "allowed", {
+        code: "SIZE_LIMIT",
+        reason: `response body exceeded ${String(RESPONSE_BODY_CAP_BYTES)} bytes and was truncated`,
+      });
+    }
+  }
+
+  return {
+    status: "ok",
+    http_status: response.status,
+    headers: scrubbedHeaders,
+    body: scrubbedBody,
+    truncated,
+  };
+}
+
+export function registerHttpRequest(
+  server: McpServer,
+  deps: HttpRequestDeps,
+): void {
+  server.registerTool(
+    "http_request",
+    {
+      description:
+        "Perform an HTTP request with named secrets injected into headers or query parameters at call time. Each injected secret's policy allowlist and rate limit are enforced; the response body and headers are scrubbed against every in-scope secret before return. Response body is capped at 10MB; requests exceeding a 60s timeout are aborted.",
+      inputSchema: HTTP_REQUEST_INPUT_SHAPE,
+    },
+    async (args) => {
+      const result = await runHttpRequest(args as HttpRequestInput, deps);
+      return {
+        content: [{ type: "text", text: JSON.stringify(result) }],
+        structuredContent: { ...result },
+        isError: result.status === "error",
+      };
+    },
+  );
+}
