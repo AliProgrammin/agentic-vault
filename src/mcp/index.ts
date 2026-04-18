@@ -24,3 +24,15 @@ export {
   type ScanEnvRequirementInput,
   type ScanEnvRequirementResult,
 } from "./scan_env_requirement.js";
+export {
+  registerHttpRequest,
+  runHttpRequest,
+  type HttpRequestDeps,
+} from "./http_request.js";
+export {
+  registerRunCommand,
+  runRunCommand,
+  type RunCommandDeps,
+  type RunCommandSpawn,
+  type SpawnedChild,
+} from "./run_command.js";

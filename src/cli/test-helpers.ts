@@ -2,13 +2,15 @@ import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { InMemoryAuditLogger } from "../audit/index.js";
 import {
   InMemoryKeychainBackend,
   VaultLockedError,
   createMasterPasswordStore,
   type TTYInterface,
 } from "../keychain/index.js";
-import type { McpServerDeps } from "../mcp/index.js";
+import type { CreateMcpServerOptions, McpServerDeps } from "../mcp/index.js";
+import { RateLimiter } from "../ratelimit/index.js";
 import {
   discoverProjectVault,
   ensureProjectVault,
@@ -103,7 +105,10 @@ export interface TestDepsOptions {
   keychainPopulated?: boolean;
   tty?: TTYInterface;
   mcpOverrides?: {
-    createMcpServer?: (deps: McpServerDeps) => McpServer;
+    createMcpServer?: (
+      deps: McpServerDeps,
+      opts?: CreateMcpServerOptions,
+    ) => McpServer;
     connectStdio?: (server: McpServer) => Promise<void>;
   };
   debug?: boolean;
@@ -116,7 +121,11 @@ export interface TestHarness {
   warnings: CapturingPrinter;
   backend: InMemoryKeychainBackend;
   tty: TTYInterface;
-  mcpCalls: { sources: McpServerDeps["sources"]; server: unknown }[];
+  mcpCalls: {
+    sources: McpServerDeps["sources"];
+    opts: CreateMcpServerOptions | undefined;
+    server: unknown;
+  }[];
 }
 
 const SERVICE = "secretproxy";
@@ -145,6 +154,8 @@ export function makeTestDeps(options: TestDepsOptions): TestHarness {
       const fake = { _sources: deps.sources } as unknown as McpServer;
       return fake;
     });
+  const audit = new InMemoryAuditLogger();
+  const rateLimiter = new RateLimiter(() => 0);
   const connectStdioFn =
     options.mcpOverrides?.connectStdio ??
     (async (): Promise<void> => {
@@ -198,9 +209,11 @@ export function makeTestDeps(options: TestDepsOptions): TestHarness {
         throw err;
       }
     },
-    createMcpServer(mcpDeps: McpServerDeps) {
-      const server = createMcpServerFn(mcpDeps);
-      mcpCalls.push({ sources: mcpDeps.sources, server });
+    audit,
+    rateLimiter,
+    createMcpServer(mcpDeps: McpServerDeps, opts?: CreateMcpServerOptions) {
+      const server = createMcpServerFn(mcpDeps, opts);
+      mcpCalls.push({ sources: mcpDeps.sources, opts, server });
       return server;
     },
     connectStdio: connectStdioFn,

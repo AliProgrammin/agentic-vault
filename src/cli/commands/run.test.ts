@@ -57,6 +57,11 @@ describe("cmdRun", () => {
     const sources = createCalls[0]?.sources;
     expect(sources?.global).toBeDefined();
     expect(sources?.global?.get("HELLO")).toBe("world");
+    // Regression guard: production wiring MUST pass two extraTools
+    // (http_request + run_command). Without this, the injecting tools are
+    // never registered and the MCP server only exposes the two read-only
+    // tools — see src/mcp/server.ts.
+    expect(harness.mcpCalls[0]?.opts?.extraTools).toHaveLength(2);
   });
 
   it("never prompts when no password is available: errors with VAULT_LOCKED", async () => {

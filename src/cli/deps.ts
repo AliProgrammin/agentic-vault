@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { FileAuditLogger } from "../audit/index.js";
 import {
   NapiKeychainBackend,
   NodeTTYInterface,
@@ -9,6 +10,7 @@ import {
   createRoutineResolver,
 } from "../keychain/index.js";
 import { createMcpServer } from "../mcp/index.js";
+import { RateLimiter } from "../ratelimit/index.js";
 import {
   discoverProjectVault,
   ensureProjectVault,
@@ -62,7 +64,10 @@ export function createDefaultDeps(
   const passwordStore = createMasterPasswordStore(backend);
   const tty = new NodeTTYInterface();
   const resolver = createRoutineResolver({ env, store: passwordStore, warn });
-  const auditLogPath = path.join(homedir, DEFAULT_AUDIT_DIR, DEFAULT_AUDIT_FILE);
+  const auditBaseDir = path.join(homedir, DEFAULT_AUDIT_DIR);
+  const auditLogPath = path.join(auditBaseDir, DEFAULT_AUDIT_FILE);
+  const audit = new FileAuditLogger({ baseDir: auditBaseDir });
+  const rateLimiter = new RateLimiter();
 
   return {
     cwd,
@@ -83,10 +88,29 @@ export function createDefaultDeps(
     discoverProjectVault,
     fileExists,
     readAuditLog: () => readAuditLog(auditLogPath),
+    audit,
+    rateLimiter,
     createMcpServer,
     connectStdio: async (server) => {
       const transport = new StdioServerTransport();
       await server.connect(transport);
+      // server.connect() returns once stdin listeners are attached; the CLI
+      // entrypoint calls process.exit(exitCode) as soon as this promise
+      // resolves, so without blocking here the server would be killed
+      // before replying to initialize. Hold until the transport closes
+      // (stdin EOF, client disconnect, explicit close).
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        const done = (): void => {
+          if (settled) return;
+          settled = true;
+          resolve();
+        };
+        server.server.onclose = done;
+        process.stdin.on("end", () => {
+          void transport.close().then(done, done);
+        });
+      });
     },
   };
 }

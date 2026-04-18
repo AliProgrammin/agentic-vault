@@ -1,6 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { AuditLogger } from "../audit/index.js";
 import type { MasterPasswordStore, TTYInterface } from "../keychain/index.js";
-import type { McpServerDeps } from "../mcp/index.js";
+import type { CreateMcpServerOptions, McpServerDeps } from "../mcp/index.js";
+import type { RateLimiter } from "../ratelimit/index.js";
 import type {
   EnsureProjectVaultResult,
   ProjectVaultLocation,
@@ -47,7 +49,13 @@ export interface CliDeps {
 
   readAuditLog(): Promise<string | null>;
 
-  createMcpServer(deps: McpServerDeps): McpServer;
+  readonly audit: AuditLogger;
+  readonly rateLimiter: RateLimiter;
+
+  createMcpServer(
+    deps: McpServerDeps,
+    opts?: CreateMcpServerOptions,
+  ): McpServer;
 
   connectStdio(server: McpServer): Promise<void>;
 }
