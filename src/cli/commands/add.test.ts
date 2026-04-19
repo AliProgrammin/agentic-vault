@@ -72,6 +72,54 @@ describe("cmdAdd", () => {
     }
   });
 
+  it("applies the default policy when the secret name is a known provider", async () => {
+    const password = "default-policy-pw";
+    const vaultPath = path.join(tmp, ".secretproxy.enc");
+    const handle = await createPopulatedGlobalVault(vaultPath, password, []);
+    handle.close();
+
+    const harness = makeTestDeps({
+      cwd: tmp,
+      homedir: tmp,
+      env: {},
+      password,
+      keychainPopulated: true,
+    });
+
+    await cmdAdd(harness.deps, "OPENAI_API_KEY", "sk-test-123", {
+      project: false,
+    });
+
+    const { unlockVault } = await import("../../vault/index.js");
+    const reopened = await unlockVault(vaultPath, password);
+    const rec = reopened.getRecord("OPENAI_API_KEY");
+    const policy = rec?.policy as { allowed_http_hosts: string[] } | undefined;
+    expect(policy).toBeDefined();
+    expect(policy?.allowed_http_hosts).toContain("api.openai.com");
+    expect(harness.stdout.text()).toContain("applied default policy");
+    reopened.close();
+  });
+
+  it("hints about deny-by-default when the secret name is unknown", async () => {
+    const password = "no-default-pw";
+    const vaultPath = path.join(tmp, ".secretproxy.enc");
+    const handle = await createPopulatedGlobalVault(vaultPath, password, []);
+    handle.close();
+
+    const harness = makeTestDeps({
+      cwd: tmp,
+      homedir: tmp,
+      env: {},
+      password,
+      keychainPopulated: true,
+    });
+
+    await cmdAdd(harness.deps, "MY_CUSTOM_KEY", "value", { project: false });
+
+    expect(harness.stdout.text()).toContain("no default policy");
+    expect(harness.stdout.text()).toContain("policy set MY_CUSTOM_KEY");
+  });
+
   it("refuses to touch stdin/TTY when the password is missing", async () => {
     // no env var, no keychain entry, poisoned TTY → expect VAULT_LOCKED.
     const harness = makeTestDeps({

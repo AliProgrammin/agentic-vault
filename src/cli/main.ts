@@ -13,6 +13,7 @@ import { cmdPolicySet, cmdPolicyShow } from "./commands/policy.js";
 import { cmdRemove } from "./commands/remove.js";
 import { cmdRotate } from "./commands/rotate.js";
 import { cmdRun } from "./commands/run.js";
+import { cmdUi } from "./commands/ui.js";
 import {
   CliError,
   EXIT_AUTH,
@@ -192,6 +193,23 @@ export function buildProgram(deps: CliDeps): Command {
     .description("Start the SecretProxy MCP server over stdio.")
     .action(async () => {
       await cmdRun(deps);
+    });
+
+  program
+    .command("ui")
+    .description("Start the SecretProxy local web UI on 127.0.0.1.")
+    .option(
+      "--port <port>",
+      "port to bind (default: 7381)",
+      (v): number => parsePositiveInt(v),
+    )
+    .option("--no-open", "do not launch a browser automatically")
+    .action(async (options: { port?: number; open?: boolean }) => {
+      const uiOpts: Parameters<typeof cmdUi>[1] = {
+        noOpen: options.open === false,
+      };
+      if (options.port !== undefined) uiOpts.port = options.port;
+      await cmdUi(deps, uiOpts);
     });
 
   return program;
