@@ -9,7 +9,7 @@ export const INDEX_HTML = String.raw`<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>SecretProxy</title>
+<title>Agentic Vault</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   * { box-sizing: border-box; }
@@ -32,6 +32,10 @@ export const INDEX_HTML = String.raw`<!doctype html>
   .app { display: grid; grid-template-columns: 220px 1fr; height: 100vh; }
   .side { background: #141414; border-right: 1px solid #262626; padding: 20px 0; }
   .brand { font-weight: 700; font-size: 16px; padding: 0 20px 20px; border-bottom: 1px solid #262626; }
+  .detail-toggle { cursor: pointer; color: #3b82f6; font-size: 11px; margin-top: 4px; user-select: none; }
+  .detail-panel { margin-top: 10px; background: #0a0a0a; border: 1px solid #1f1f1f; border-radius: 6px; padding: 10px; font-family: "SF Mono", Menlo, monospace; font-size: 12px; white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow: auto; color: #c4c4c4; }
+  .detail-label { color: #9a9a9a; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 8px; }
+  .detail-label:first-child { margin-top: 0; }
   .nav { padding: 10px 0; }
   .nav a { display: block; padding: 10px 20px; color: #b4b4b4; text-decoration: none; cursor: pointer; font-size: 14px; border-left: 3px solid transparent; }
   .nav a.active { color: #fff; background: #1c1c1c; border-left-color: #3b82f6; }
@@ -136,8 +140,7 @@ export const INDEX_HTML = String.raw`<!doctype html>
   }
 
   function renderLogin() {
-    let pw = "", err = "";
-    const pwInput = h("input", { type: "password", autofocus: true, placeholder: "master password" });
+    const pwInput = h("input", { type: "password", autofocus: true, placeholder: "master password", autocomplete: "off", name: "vault-unlock", "data-lpignore": "true", "data-form-type": "other" });
     const errEl = h("div", { class: "err" }, "");
     const submit = async () => {
       errEl.textContent = "";
@@ -147,7 +150,7 @@ export const INDEX_HTML = String.raw`<!doctype html>
     };
     pwInput.addEventListener("keydown", e => { if (e.key === "Enter") submit(); });
     const card = h("div", { class: "login-card" },
-      h("h1", {}, "SecretProxy"),
+      h("h1", {}, "Agentic Vault"),
       h("p", {}, "Enter the master password to unlock the vault."),
       h("label", {}, "Master password"),
       pwInput,
@@ -161,14 +164,16 @@ export const INDEX_HTML = String.raw`<!doctype html>
 
   function renderSide() {
     return h("div", { class: "side" },
-      h("div", { class: "brand" }, "SecretProxy"),
+      h("div", { class: "brand" }, "Agentic Vault"),
       h("div", { class: "nav" },
         h("a", {
           class: state.view === "secrets" ? "active" : "",
+          href: "#secrets",
           onclick: () => { state.view = "secrets"; render(); },
         }, "Secrets"),
         h("a", {
           class: state.view === "audit" ? "active" : "",
+          href: "#audit",
           onclick: () => { state.view = "audit"; loadAudit().then(render); },
         }, "Audit log"),
       ),
@@ -253,18 +258,59 @@ export const INDEX_HTML = String.raw`<!doctype html>
     )));
     const tbody = h("tbody");
     for (const ev of [...state.audit].reverse()) {
+      const reasonCell = h("td", {},
+        ev.reason || ev.code || "",
+      );
+      if (ev.detail) {
+        const shouldAutoExpand = location.hash.includes("expand");
+        const toggle = h("div", { class: "detail-toggle" }, shouldAutoExpand ? "▾ details" : "▸ details");
+        const panel = h("div", { class: "detail-panel", style: shouldAutoExpand ? "display: block;" : "display: none;" });
+        renderDetail(panel, ev);
+        toggle.addEventListener("click", () => {
+          const open = panel.style.display !== "none";
+          panel.style.display = open ? "none" : "block";
+          toggle.textContent = open ? "▸ details" : "▾ details";
+        });
+        reasonCell.appendChild(toggle);
+        reasonCell.appendChild(panel);
+      }
       tbody.appendChild(h("tr", {},
         h("td", {}, new Date(ev.ts).toLocaleString()),
         h("td", {}, h("code", {}, ev.tool)),
         h("td", {}, h("code", {}, ev.secret_name)),
         h("td", {}, ev.target),
         h("td", {}, h("span", { class: "tag " + ev.outcome }, ev.outcome)),
-        h("td", {}, ev.reason || ev.code || ""),
+        reasonCell,
       ));
     }
     table.appendChild(tbody);
     frag.appendChild(table);
     return frag;
+  }
+
+  function renderDetail(host, ev) {
+    const d = ev.detail || {};
+    function sec(label, value) {
+      if (value === undefined || value === null || value === "") return;
+      host.appendChild(h("div", { class: "detail-label" }, label));
+      const v = typeof value === "object" ? JSON.stringify(value, null, 2) : String(value);
+      host.appendChild(h("div", {}, v));
+    }
+    if (ev.tool === "http_request") {
+      sec("Method", d.method);
+      sec("URL", d.url);
+      sec("Request body", d.request_body);
+      sec("Response status", d.response_status);
+      sec("Response body (scrubbed)", d.response_body);
+    } else if (ev.tool === "run_command") {
+      sec("Binary", ev.target);
+      sec("Argv", d.argv);
+      sec("Exit code", d.exit_code);
+      sec("Stdout (scrubbed)", d.stdout);
+      sec("Stderr (scrubbed)", d.stderr);
+    } else {
+      sec("Detail", d);
+    }
   }
 
   async function loadAll() {
@@ -497,7 +543,18 @@ export const INDEX_HTML = String.raw`<!doctype html>
     return wrap;
   }
 
+  function syncViewFromHash() {
+    const h = (location.hash || "").replace(/^#/, "").split(/[?&]/)[0];
+    if (h === "audit" || h === "audit-expand") state.view = "audit";
+    else if (h === "secrets") state.view = "secrets";
+  }
+  window.addEventListener("hashchange", () => {
+    syncViewFromHash();
+    if (state.view === "audit" && state.loggedIn) { loadAudit().then(render); return; }
+    render();
+  });
   async function init() {
+    syncViewFromHash();
     const r = await api.json("/api/session");
     if (r && r.ok) {
       state.loggedIn = true;

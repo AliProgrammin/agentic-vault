@@ -24,8 +24,10 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
   createRequestId,
+  AUDIT_DETAIL_CAP_BYTES,
   type AuditErrorCode,
   type AuditEvent,
+  type AuditEventDetail,
   type AuditLogger,
 } from "../audit/index.js";
 import { checkHttp, policySchema, type Policy } from "../policy/index.js";
@@ -124,6 +126,13 @@ interface PreparedInjection {
   template: string;
 }
 
+function truncate(s: string): string {
+  if (Buffer.byteLength(s, "utf8") <= AUDIT_DETAIL_CAP_BYTES) return s;
+  return Buffer.from(s, "utf8")
+    .subarray(0, AUDIT_DETAIL_CAP_BYTES)
+    .toString("utf8") + "\u2026";
+}
+
 function buildEvent(
   base: {
     requestId: string;
@@ -132,7 +141,11 @@ function buildEvent(
     target: string;
     outcome: "allowed" | "denied";
   },
-  extra: { code?: AuditErrorCode; reason?: string },
+  extra: {
+    code?: AuditErrorCode;
+    reason?: string;
+    detail?: AuditEventDetail;
+  },
 ): AuditEvent {
   const event: AuditEvent = {
     ts: new Date().toISOString(),
@@ -144,6 +157,7 @@ function buildEvent(
     caller_cwd: base.callerCwd,
     ...(extra.code !== undefined ? { code: extra.code } : {}),
     ...(extra.reason !== undefined ? { reason: extra.reason } : {}),
+    ...(extra.detail !== undefined ? { detail: extra.detail } : {}),
   };
   return event;
 }
@@ -227,7 +241,11 @@ export async function runHttpRequest(
   const recordAudit = async (
     secretName: string,
     outcome: "allowed" | "denied",
-    extra: { code?: AuditErrorCode; reason?: string } = {},
+    extra: {
+      code?: AuditErrorCode;
+      reason?: string;
+      detail?: AuditEventDetail;
+    } = {},
   ): Promise<void> => {
     await deps.audit.record(
       buildEvent(
@@ -402,8 +420,21 @@ export async function runHttpRequest(
     scrubbedHeaders[scrubbedName] = scrubFn(v, scrubSecrets);
   }
 
+  const scrubbedRequestBody =
+    input.body !== undefined && input.method !== "GET" && input.method !== "HEAD"
+      ? scrubFn(input.body, scrubSecrets)
+      : undefined;
+  const detail: AuditEventDetail = {
+    method: input.method,
+    url: scrubFn(finalUrl.toString(), scrubSecrets),
+    ...(scrubbedRequestBody !== undefined
+      ? { request_body: truncate(scrubbedRequestBody) }
+      : {}),
+    response_status: response.status,
+    response_body: truncate(scrubbedBody),
+  };
   for (const p of prepared) {
-    await recordAudit(p.secretName, "allowed");
+    await recordAudit(p.secretName, "allowed", { detail });
   }
   if (truncated) {
     const annotationSecret = prepared[0];
@@ -431,8 +462,20 @@ export function registerHttpRequest(
   server.registerTool(
     "http_request",
     {
-      description:
-        "Perform an HTTP request with named secrets injected into headers or query parameters at call time. Each injected secret's policy allowlist and rate limit are enforced; the response body and headers are scrubbed against every in-scope secret before return. Response body is capped at 10MB; requests exceeding a 60s timeout are aborted.",
+      description: `Perform an HTTP request with named secrets injected into headers or query parameters at call time. Each injected secret's policy allowlist and rate limit are enforced; the response body and headers are scrubbed against every in-scope secret before return. Response body is capped at 10MB; requests exceeding a 60s timeout are aborted.
+
+USAGE EXAMPLES:
+
+Bearer token (most APIs — OpenAI, Anthropic, OpenRouter, etc.):
+  inject: [{ secret: "OPENROUTER_API_KEY", into: "header", name: "Authorization", template: "Bearer {{value}}" }]
+
+Raw API key header (e.g. X-API-Key style):
+  inject: [{ secret: "MY_KEY", into: "header", name: "X-API-Key", template: "{{value}}" }]
+
+Query parameter (e.g. ?api_key=...):
+  inject: [{ secret: "MY_KEY", into: "query", name: "api_key", template: "{{value}}" }]
+
+IMPORTANT: The placeholder is always exactly {{value}} — no other placeholders are supported. For Bearer tokens you MUST write "Bearer {{value}}" (with the "Bearer " prefix) in the template field — do NOT write just "{{value}}" for Authorization headers that require Bearer scheme.`,
       inputSchema: HTTP_REQUEST_INPUT_SHAPE,
     },
     async (args) => {

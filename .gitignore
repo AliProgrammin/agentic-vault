@@ -1,0 +1,24 @@
+node_modules/
+dist/
+coverage/
+.DS_Store
+*.log
+
+# SecretProxy vault files — never commit
+*.secretproxy.enc
+.secretproxy.enc
+.secretproxy/
+
+# Local ship-code state
+.ship/
+.ship/issues.md.bak
+
+# Claude Code local settings/state
+.claude/
+
+# Build artifacts
+*.tgz
+
+# Editor
+.vscode/
+.idea/

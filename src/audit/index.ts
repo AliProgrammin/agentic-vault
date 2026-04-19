@@ -1,7 +1,9 @@
 export {
   AUDIT_ERROR_CODES,
+  AUDIT_DETAIL_CAP_BYTES,
   type AuditErrorCode,
   type AuditEvent,
+  type AuditEventDetail,
   type AuditLogger,
   type AuditOutcome,
 } from "./types.js";

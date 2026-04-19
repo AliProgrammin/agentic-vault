@@ -146,6 +146,10 @@ describe("http_request", () => {
     expect(ev.secret_name).toBe("API");
     expect(ev.target).toBe("api.example.com");
     expect(ev.tool).toBe("http_request");
+    expect(ev.detail?.method).toBe("GET");
+    expect(ev.detail?.url).toContain("api.example.com");
+    expect(ev.detail?.response_status).toBe(200);
+    expect(ev.detail?.response_body).toBe("ok-body");
   });
 
   it("denied HTTP host blocks request", async () => {

@@ -168,11 +168,15 @@ describe("run_command", () => {
     if (!env) return;
     expect(env["CLOUDFLARE_API_TOKEN"]).toBe("SEKRET123");
 
-    // Audit: one allowed record.
+    // Audit: one allowed record with detail payload.
     const events = ctx.audit.events;
     expect(events).toHaveLength(1);
-    expect(events[0]?.outcome).toBe("allowed");
-    expect(events[0]?.secret_name).toBe("TOKEN");
+    const ev = events[0];
+    expect(ev?.outcome).toBe("allowed");
+    expect(ev?.secret_name).toBe("TOKEN");
+    expect(ev?.detail?.argv).toEqual(["deploy"]);
+    expect(ev?.detail?.exit_code).toBe(0);
+    expect(ev?.detail?.stdout).toBe("deployed ok\n");
   });
 
   it("spawn options: shell:false, env has exactly the 8 passthrough keys that are set + injected keys; unrelated parent env does not leak", async () => {

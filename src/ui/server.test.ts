@@ -86,7 +86,7 @@ describe("UI HTTP server", () => {
     const res = await fetch(env.url + "/");
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("<title>SecretProxy</title>");
+    expect(html).toContain("<title>Agentic Vault</title>");
     expect(res.headers.get("x-frame-options")).toBe("DENY");
   });
 

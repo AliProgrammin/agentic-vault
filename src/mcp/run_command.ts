@@ -36,8 +36,10 @@ import {
 import { scrub, type ScrubbableSecret } from "../scrub/index.js";
 import {
   createRequestId,
+  AUDIT_DETAIL_CAP_BYTES,
   type AuditErrorCode,
   type AuditEvent,
+  type AuditEventDetail,
   type AuditLogger,
 } from "../audit/index.js";
 import type { RateLimiter } from "../ratelimit/index.js";
@@ -145,6 +147,13 @@ function isAbsolutePath(p: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(p);
 }
 
+function truncateAudit(s: string): string {
+  if (Buffer.byteLength(s, "utf8") <= AUDIT_DETAIL_CAP_BYTES) return s;
+  return Buffer.from(s, "utf8")
+    .subarray(0, AUDIT_DETAIL_CAP_BYTES)
+    .toString("utf8") + "\u2026";
+}
+
 async function recordAudit(
   logger: AuditLogger,
   clock: () => number,
@@ -152,7 +161,11 @@ async function recordAudit(
   secret_name: string,
   target: string,
   outcome: "allowed" | "denied",
-  opts: { code?: AuditErrorCode; reason?: string } = {},
+  opts: {
+    code?: AuditErrorCode;
+    reason?: string;
+    detail?: AuditEventDetail;
+  } = {},
 ): Promise<void> {
   const event: AuditEvent = {
     ts: nowIso(clock),
@@ -165,6 +178,7 @@ async function recordAudit(
   };
   if (opts.reason !== undefined) event.reason = opts.reason;
   if (opts.code !== undefined) event.code = opts.code;
+  if (opts.detail !== undefined) event.detail = opts.detail;
   await logger.record(event);
 }
 
@@ -411,8 +425,19 @@ export async function runRunCommand(
     return { ok: false, code: "TIMEOUT", reason };
   }
 
+  const scrubbedArgv = input.args.map((a) => scrub(a, secretsInScope));
+  const exitCodeForDetail =
+    exitInfo.error !== undefined ? -1 : exitInfo.code === null ? -1 : exitInfo.code;
+  const allowedDetail: AuditEventDetail = {
+    argv: scrubbedArgv,
+    exit_code: exitCodeForDetail,
+    stdout: truncateAudit(stdout),
+    stderr: truncateAudit(stderr),
+  };
   for (const [, secretName] of injectEntries) {
-    await recordAudit(deps.audit, clock, requestId, secretName, command, "allowed");
+    await recordAudit(deps.audit, clock, requestId, secretName, command, "allowed", {
+      detail: allowedDetail,
+    });
   }
 
   if (stdoutAcc.truncated || stderrAcc.truncated) {
@@ -452,8 +477,14 @@ export function registerRunCommand(server: McpServer, deps: RunCommandDeps): voi
   server.registerTool(
     "run_command",
     {
-      description:
-        "Spawn a subprocess (shell: false) with args passed as an array. Named secrets from the vault are injected into the specified environment variables at spawn time — their values never appear in argv. Policy (binary allowlist, arg pattern allowlist/denylist, env var target allowlist) and rate limits are enforced per injected secret. stdout and stderr are captured, capped at 10 MB each, scrubbed against all in-scope secrets, and returned.",
+      description: `Spawn a subprocess (shell: false) with args passed as an array. Named secrets from the vault are injected into the specified environment variables at spawn time — their values never appear in argv. Policy (binary allowlist, arg pattern allowlist/denylist, env var target allowlist) and rate limits are enforced per injected secret. stdout and stderr are captured, capped at 10 MB each, scrubbed against all in-scope secrets, and returned.
+
+USAGE EXAMPLE:
+  command: "curl"
+  args: ["-s", "https://api.example.com/endpoint"]
+  inject_env: { "API_KEY": "MY_SECRET_NAME" }
+
+This puts the secret value into the env var API_KEY for the subprocess. The secret value NEVER appears in args. inject_env maps env-var-name → vault-secret-name.`,
       inputSchema: RUN_COMMAND_INPUT_SHAPE,
     },
     async (rawArgs) => {
