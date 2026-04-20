@@ -413,7 +413,7 @@ export async function runRunCommand(
     injections[targetName] = resolved.value;
     scopeByTarget.set(targetName, resolved.scope);
     rateByTarget.set(targetName, {
-      remaining: Math.max(0, Math.floor(policy.rate_limit.requests)),
+      remaining: Math.max(0, rate.remaining),
       capacity: policy.rate_limit.requests,
       window_seconds: policy.rate_limit.window_seconds,
     });

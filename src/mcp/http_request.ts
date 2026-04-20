@@ -358,7 +358,7 @@ export async function runHttpRequest(
 
     const rateSnapshot: AuditRateLimitState | undefined = rateDecision.allowed
       ? {
-          remaining: Math.max(0, Math.floor(policy.rate_limit.requests)),
+          remaining: Math.max(0, rateDecision.remaining),
           capacity: policy.rate_limit.requests,
           window_seconds: policy.rate_limit.window_seconds,
         }
@@ -509,29 +509,25 @@ export async function runHttpRequest(
   }
 
   const contentType = response.headers.get("content-type") ?? undefined;
-  const responseArtifact: BodyArtifact = classifyBody(bytes, {
-    cap: DEFAULT_RESPONSE_BODY_CAP_BYTES,
+  // Binary-probe first (uncapped) so binary detection sees the full payload.
+  // For text: scrub the FULL decoded text, then cap — this ensures a secret
+  // straddling the cap boundary cannot leave a partial prefix in the blob.
+  const binaryProbe: BodyArtifact = classifyBody(bytes, {
+    cap: Number.MAX_SAFE_INTEGER,
     ...(contentType !== undefined ? { contentType } : {}),
   });
+  const scrubbedResponseArtifact: BodyArtifact =
+    binaryProbe.kind === "text"
+      ? classifyText(scrubFn(binaryProbe.text, scrubSecrets), {
+          cap: DEFAULT_RESPONSE_BODY_CAP_BYTES,
+        })
+      : binaryProbe;
   const requestArtifact: BodyArtifact | undefined =
     scrubbedRequestBody !== undefined
       ? classifyText(scrubbedRequestBody, {
           cap: DEFAULT_REQUEST_BODY_CAP_BYTES,
         })
       : undefined;
-  // Scrub artifacts: if text, scrub the text; binary placeholders have no
-  // plaintext to scrub but apply scrub to the sha256 line to defend against
-  // a secret that happens to look like hex.
-  const scrubbedResponseArtifact: BodyArtifact =
-    responseArtifact.kind === "text"
-      ? {
-          kind: "text",
-          text: scrubFn(responseArtifact.text, scrubSecrets),
-          original_bytes: responseArtifact.original_bytes,
-          truncated: responseArtifact.truncated,
-          truncated_bytes: responseArtifact.truncated_bytes,
-        }
-      : responseArtifact;
 
   const requestView: AuditHttpRequest = {
     method: input.method,

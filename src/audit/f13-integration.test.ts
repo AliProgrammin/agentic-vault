@@ -333,6 +333,128 @@ describe("F13 — no-plaintext-anywhere integration", () => {
     }
   });
 
+  it("scrub-before-truncate: a secret straddling the 256 KiB boundary leaves no prefix in the stored blob", async () => {
+    const auditBaseDir = path.join(root, ".secretproxy");
+    await fs.mkdir(auditBaseDir, { recursive: true });
+    const vaultPath = path.join(root, ".secretproxy.enc");
+    const v = await createVault(vaultPath, "pw-boundary-scrub", { kdfParams: FAST_KDF });
+    vault = v;
+    v.set("CLOUDFLARE_API_TOKEN", SEKRET, cloudflarePolicy());
+    await v.save();
+    const bodyKey = v.deriveSubkey(BODY_KEY_INFO);
+    const bodyStore = new EncryptedBodyStore({ baseDir: auditBaseDir, key: bodyKey });
+    const audit = new FileAuditLogger({ baseDir: auditBaseDir });
+
+    // Place the plaintext so it straddles the cap: first 4 chars land inside
+    // the kept slice, last 5 chars land in the elided tail. A naïve truncate-
+    // then-scrub would leave the "SEKR" prefix in the blob.
+    const padLen = DEFAULT_RESPONSE_BODY_CAP_BYTES - 4;
+    const big = "x".repeat(padLen) + SEKRET + "y".repeat(1024);
+
+    const deps: HttpRequestDeps = {
+      sources: { global: v },
+      audit,
+      rateLimiter: new RateLimiter(),
+      bodyStore,
+      fetch: async () =>
+        new Response(big, {
+          status: 200,
+          headers: { "content-type": "text/plain" },
+        }),
+    };
+    await runHttpRequest(
+      {
+        url: "https://api.example.com/big",
+        method: "GET",
+        inject: [
+          {
+            secret: "CLOUDFLARE_API_TOKEN",
+            into: "header",
+            name: "Authorization",
+            template: "Bearer {{value}}",
+          },
+        ],
+      },
+      deps,
+    );
+    const entries = await readAuditEntries(path.join(auditBaseDir, "audit.log"));
+    const ev = entries.find(
+      (e) => e.surface === "mcp_http_request" && e.outcome === "allowed" && e.body_ref !== undefined,
+    );
+    expect(ev).toBeDefined();
+    if (!ev?.body_ref) return;
+    const payload = await bodyStore.readBody(ev.body_ref.blob_id);
+    expect(payload.response?.kind).toBe("text");
+    if (payload.response?.kind !== "text") return;
+    const blob = payload.response.text;
+    // No plaintext and no partial prefix of the secret must remain in the
+    // blob, even though the secret straddles the cap boundary. Scrub happens
+    // on the full decoded text *before* truncation, so the whole secret is
+    // replaced with a marker (which may itself be partially truncated) — but
+    // NEVER a byte of the raw secret is kept.
+    expect(blob).not.toContain(SEKRET);
+    for (let i = 2; i <= SEKRET.length; i += 1) {
+      expect(blob).not.toContain(SEKRET.slice(0, i));
+    }
+    expect(blob).toContain("<truncated:");
+    // Raw encrypted blob on disk must also contain neither the plaintext
+    // nor a partial prefix of it.
+    const blobPath = bodyStore.pathFor(ev.body_ref.blob_id);
+    const raw = await fs.readFile(blobPath);
+    const rawUtf8 = raw.toString("utf8");
+    expect(rawUtf8).not.toContain(SEKRET);
+    expect(rawUtf8).not.toContain(SEKRET.slice(0, 4));
+  });
+
+  it("rate_limit_state.remaining decreases across successive calls for the same secret", async () => {
+    const auditBaseDir = path.join(root, ".secretproxy");
+    await fs.mkdir(auditBaseDir, { recursive: true });
+    const vaultPath = path.join(root, ".secretproxy.enc");
+    const v = await createVault(vaultPath, "pw-rl-remaining", { kdfParams: FAST_KDF });
+    vault = v;
+    v.set("API", "rl-val", cloudflarePolicy());
+    const bodyKey = v.deriveSubkey(BODY_KEY_INFO);
+    const bodyStore = new EncryptedBodyStore({ baseDir: auditBaseDir, key: bodyKey });
+    const audit = new FileAuditLogger({ baseDir: auditBaseDir });
+    const rateLimiter = new RateLimiter(() => Date.now());
+
+    const deps: HttpRequestDeps = {
+      sources: { global: v },
+      audit,
+      rateLimiter,
+      bodyStore,
+      fetch: async () =>
+        new Response("{}", { status: 200, headers: { "content-type": "application/json" } }),
+    };
+    for (let i = 0; i < 3; i += 1) {
+      await runHttpRequest(
+        {
+          url: "https://api.example.com/ok",
+          method: "GET",
+          inject: [
+            { secret: "API", into: "header", name: "Authorization", template: "Bearer {{value}}" },
+          ],
+        },
+        deps,
+      );
+    }
+    const entries = await readAuditEntries(path.join(auditBaseDir, "audit.log"));
+    const remains = entries
+      .filter((e) => e.surface === "mcp_http_request" && e.outcome === "allowed")
+      .map((e) => e.rate_limit_state?.remaining)
+      .filter((r): r is number => typeof r === "number");
+    expect(remains.length).toBeGreaterThanOrEqual(3);
+    // Bucket capacity is 50 per the policy; first allowed call leaves 49, etc.
+    expect(remains[0]).toBe(49);
+    expect(remains[1]).toBe(48);
+    expect(remains[2]).toBe(47);
+    // Capacity is still capacity (unchanged).
+    const caps = entries
+      .filter((e) => e.surface === "mcp_http_request" && e.outcome === "allowed")
+      .map((e) => e.rate_limit_state?.capacity);
+    expect(caps.every((c) => c === 50)).toBe(true);
+  });
+
   it("CLI and UI agree on the rendered content for the same id (same model fields)", async () => {
     const auditBaseDir = path.join(root, ".secretproxy");
     await fs.mkdir(auditBaseDir, { recursive: true });

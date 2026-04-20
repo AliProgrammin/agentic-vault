@@ -13,7 +13,7 @@
 import type { Policy } from "../policy/index.js";
 
 export type RateDecision =
-  | { allowed: true }
+  | { allowed: true; remaining: number }
   | {
       allowed: false;
       reason: "rate_limit_exceeded";
@@ -55,7 +55,7 @@ export class RateLimiter {
 
     if (bucket.tokens >= 1) {
       bucket.tokens -= 1;
-      return { allowed: true };
+      return { allowed: true, remaining: Math.floor(bucket.tokens) };
     }
 
     const needed = 1 - bucket.tokens;
