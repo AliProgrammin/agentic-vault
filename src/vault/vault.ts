@@ -275,6 +275,31 @@ export class VaultHandle {
   public isClosed(): boolean {
     return this.closed;
   }
+
+  /**
+   * Derive a subkey for use by adjacent encrypted stores (e.g. the F13
+   * encrypted-body-blob store). Uses HKDF-SHA-256 with a fixed info
+   * string so callers cannot collide on the same subkey by accident.
+   * The returned buffer is a new allocation; the master key is never
+   * exposed.
+   */
+  public deriveSubkey(info: string, length: number = 32): Buffer {
+    this.assertOpen();
+    if (info.length === 0) {
+      throw new TypeError("deriveSubkey info must not be empty");
+    }
+    if (length <= 0 || length > 64) {
+      throw new TypeError("deriveSubkey length must be in (0, 64]");
+    }
+    const derived = crypto.hkdfSync(
+      "sha256",
+      this.key,
+      this.salt,
+      Buffer.from(info, "utf8"),
+      length,
+    );
+    return Buffer.from(derived);
+  }
 }
 
 export async function createVault(

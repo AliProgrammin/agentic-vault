@@ -1,4 +1,6 @@
+import * as path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { EncryptedBodyStore } from "../../audit/index.js";
 import {
   registerHttpRequest,
   registerRunCommand,
@@ -8,6 +10,8 @@ import {
 } from "../../mcp/index.js";
 import type { VaultHandle } from "../../vault/index.js";
 import type { CliDeps } from "../types.js";
+
+const BODY_KEY_INFO = "secretproxy/audit-body-v1";
 
 export async function cmdRun(deps: CliDeps): Promise<void> {
   const password = deps.resolvePassword();
@@ -22,15 +26,25 @@ export async function cmdRun(deps: CliDeps): Promise<void> {
       project = await deps.unlockVault(loc.vaultPath, password);
     }
     const mcpDeps: McpServerDeps = { sources: { global, project } };
+    const keyHolder = global ?? project;
+    const bodyStore =
+      keyHolder !== null
+        ? new EncryptedBodyStore({
+            baseDir: path.dirname(deps.auditLogPath),
+            key: keyHolder.deriveSubkey(BODY_KEY_INFO),
+          })
+        : undefined;
     const httpDeps: HttpRequestDeps = {
       ...mcpDeps,
       audit: deps.audit,
       rateLimiter: deps.rateLimiter,
+      ...(bodyStore !== undefined ? { bodyStore } : {}),
     };
     const runDeps: RunCommandDeps = {
       ...mcpDeps,
       audit: deps.audit,
       rateLimiter: deps.rateLimiter,
+      ...(bodyStore !== undefined ? { bodyStore } : {}),
     };
     const extraTools = [
       (s: McpServer): void => registerHttpRequest(s, httpDeps),

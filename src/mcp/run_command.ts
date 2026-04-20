@@ -37,10 +37,21 @@ import { scrub, type ScrubbableSecret } from "../scrub/index.js";
 import {
   createRequestId,
   AUDIT_DETAIL_CAP_BYTES,
+  DEFAULT_RESPONSE_BODY_CAP_BYTES,
+  classifyText,
+  type AuditCommandRequest,
+  type AuditCommandResponse,
   type AuditErrorCode,
   type AuditEvent,
   type AuditEventDetail,
+  type AuditInjectedSecret,
   type AuditLogger,
+  type AuditPolicyDecision,
+  type AuditProcessContext,
+  type AuditRateLimitState,
+  type AuditTiming,
+  type BodyBlobPayload,
+  type EncryptedBodyStore,
 } from "../audit/index.js";
 import type { RateLimiter } from "../ratelimit/index.js";
 import type { McpServerDeps } from "./server.js";
@@ -97,6 +108,10 @@ export interface RunCommandDeps extends McpServerDeps {
   readonly timeoutMs?: number;
   readonly clock?: () => number;
   readonly parentEnv?: NodeJS.ProcessEnv;
+  /** Encrypted body-blob store for F13 audit detail view. Optional. */
+  readonly bodyStore?: EncryptedBodyStore;
+  /** Injected in tests for deterministic process-context. */
+  readonly processContextProvider?: () => AuditProcessContext;
 }
 
 export const RUN_COMMAND_INPUT_SHAPE = {
@@ -175,6 +190,38 @@ async function recordAudit(
     outcome,
     request_id: requestId,
     caller_cwd: process.cwd(),
+  };
+  if (opts.reason !== undefined) event.reason = opts.reason;
+  if (opts.code !== undefined) event.code = opts.code;
+  if (opts.detail !== undefined) event.detail = opts.detail;
+  await logger.record(event);
+}
+
+// Layers F13 fields on top of the legacy event. Used on the allowed / size-
+// limit audit paths once the command has run to completion.
+async function recordAuditExtended(
+  logger: AuditLogger,
+  clock: () => number,
+  requestId: string,
+  secret_name: string,
+  target: string,
+  outcome: "allowed" | "denied",
+  opts: {
+    code?: AuditErrorCode;
+    reason?: string;
+    detail?: AuditEventDetail;
+  },
+  f13: Partial<AuditEvent>,
+): Promise<void> {
+  const event: AuditEvent = {
+    ts: nowIso(clock),
+    secret_name,
+    tool: TOOL_NAME,
+    target,
+    outcome,
+    request_id: requestId,
+    caller_cwd: process.cwd(),
+    ...f13,
   };
   if (opts.reason !== undefined) event.reason = opts.reason;
   if (opts.code !== undefined) event.code = opts.code;
@@ -268,6 +315,11 @@ export async function runRunCommand(
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const spawn = deps.spawn ?? DEFAULT_SPAWN;
   const requestId = createRequestId();
+  const receivedAt = nowIso(clock);
+  const processContext: AuditProcessContext =
+    deps.processContextProvider !== undefined
+      ? deps.processContextProvider()
+      : { pid: process.pid, cwd: process.cwd(), tool_name: TOOL_NAME };
 
   const { command, args, cwd, inject_env } = input;
 
@@ -306,6 +358,8 @@ export async function runRunCommand(
 
   // Per-injection policy + rate limit enforcement.
   const injections: Record<string, string> = {};
+  const scopeByTarget = new Map<string, "global" | "project">();
+  const rateByTarget = new Map<string, AuditRateLimitState>();
   for (const [targetName, secretName] of injectEntries) {
     const resolved = resolveSecret(secretName, deps.sources);
     if (!resolved) {
@@ -357,8 +411,15 @@ export async function runRunCommand(
     }
 
     injections[targetName] = resolved.value;
+    scopeByTarget.set(targetName, resolved.scope);
+    rateByTarget.set(targetName, {
+      remaining: Math.max(0, Math.floor(policy.rate_limit.requests)),
+      capacity: policy.rate_limit.requests,
+      window_seconds: policy.rate_limit.window_seconds,
+    });
   }
 
+  const policyCheckedAt = nowIso(clock);
   const childEnv = buildChildEnv(parentEnv, injections);
   const isWindows = process.platform === "win32";
   const spawnOpts: SpawnOptions = {
@@ -371,6 +432,7 @@ export async function runRunCommand(
     spawnOpts.cwd = cwd;
   }
 
+  const upstreamStartedAt = nowIso(clock);
   const child = spawn(command, args, spawnOpts);
 
   const stdoutAcc: Accumulator = { chunks: [], len: 0, truncated: false };
@@ -408,6 +470,7 @@ export async function runRunCommand(
     });
   });
 
+  const upstreamFinishedAt = nowIso(clock);
   const secretsInScope = collectInScopeSecrets(deps);
   const rawStdout = Buffer.concat(stdoutAcc.chunks, stdoutAcc.len).toString("utf8");
   const rawStderr = Buffer.concat(stderrAcc.chunks, stderrAcc.len).toString("utf8");
@@ -434,10 +497,83 @@ export async function runRunCommand(
     stdout: truncateAudit(stdout),
     stderr: truncateAudit(stderr),
   };
+
+  // ── F13 enrichment ───────────────────────────────────────────────────
+  const injectedSecretsList: AuditInjectedSecret[] = injectEntries.map(
+    ([targetName, secretName]) => ({
+      secret_name: secretName,
+      scope: scopeByTarget.get(targetName) ?? "global",
+      target: targetName,
+    }),
+  );
+  const envKeys = Object.keys(inject_env);
+  const commandRequest: AuditCommandRequest = {
+    binary: command,
+    args: scrubbedArgv,
+    env_keys: envKeys,
+    ...(cwd !== undefined ? { cwd } : {}),
+  };
+  const commandResponse: AuditCommandResponse = {
+    exit_code: exitCodeForDetail,
+    ...(stdoutAcc.truncated ? { stdout_truncated: true } : {}),
+    ...(stderrAcc.truncated ? { stderr_truncated: true } : {}),
+  };
+  const returnedAt = nowIso(clock);
+  const timing: AuditTiming = {
+    received_at: receivedAt,
+    policy_checked_at: policyCheckedAt,
+    upstream_started_at: upstreamStartedAt,
+    upstream_finished_at: upstreamFinishedAt,
+    returned_at: returnedAt,
+  };
+  const firstRateEntry = injectEntries.find(
+    ([t]) => rateByTarget.get(t) !== undefined,
+  );
+  const firstRate =
+    firstRateEntry !== undefined ? rateByTarget.get(firstRateEntry[0]) : undefined;
+  const stdoutArtifact = classifyText(stdout, {
+    cap: DEFAULT_RESPONSE_BODY_CAP_BYTES,
+  });
+  const stderrArtifact = classifyText(stderr, {
+    cap: DEFAULT_RESPONSE_BODY_CAP_BYTES,
+  });
+  let blobWritten = false;
+  if (deps.bodyStore !== undefined) {
+    const payload: BodyBlobPayload = {
+      stdout: stdoutArtifact,
+      stderr: stderrArtifact,
+    };
+    try {
+      await deps.bodyStore.writeBody(requestId, payload);
+      blobWritten = true;
+    } catch {
+      // keep going — metadata-only audit record is still written
+    }
+  }
+  const policyDecision: AuditPolicyDecision = { outcome: "allowed" };
+  const f13Allowed = {
+    surface: "mcp_run_command" as const,
+    request: commandRequest,
+    response: commandResponse,
+    injected_secrets: injectedSecretsList,
+    policy_decision: policyDecision,
+    timing,
+    process_context: processContext,
+    ...(firstRate !== undefined ? { rate_limit_state: firstRate } : {}),
+    ...(blobWritten ? { body_ref: { blob_id: requestId } } : {}),
+  };
+
   for (const [, secretName] of injectEntries) {
-    await recordAudit(deps.audit, clock, requestId, secretName, command, "allowed", {
-      detail: allowedDetail,
-    });
+    await recordAuditExtended(
+      deps.audit,
+      clock,
+      requestId,
+      secretName,
+      command,
+      "allowed",
+      { detail: allowedDetail },
+      f13Allowed,
+    );
   }
 
   if (stdoutAcc.truncated || stderrAcc.truncated) {
@@ -449,10 +585,16 @@ export async function runRunCommand(
           : "stderr";
     const reason = `${which} truncated at ${String(MAX_OUTPUT_BYTES)} bytes`;
     for (const [, secretName] of injectEntries) {
-      await recordAudit(deps.audit, clock, requestId, secretName, command, "denied", {
-        code: "SIZE_LIMIT",
-        reason,
-      });
+      await recordAuditExtended(
+        deps.audit,
+        clock,
+        requestId,
+        secretName,
+        command,
+        "denied",
+        { code: "SIZE_LIMIT", reason },
+        f13Allowed,
+      );
     }
   }
 

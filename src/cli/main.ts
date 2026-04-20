@@ -7,6 +7,9 @@ import {
 import { VaultError, WrongPasswordError } from "../vault/index.js";
 import { cmdAdd } from "./commands/add.js";
 import { cmdAudit } from "./commands/audit.js";
+import { cmdAuditList } from "./commands/audit-list.js";
+import { cmdAuditPrune } from "./commands/audit-prune.js";
+import { cmdAuditShow } from "./commands/audit-show.js";
 import { cmdInit } from "./commands/init.js";
 import { type ListScope, cmdList } from "./commands/list.js";
 import { cmdPolicySet, cmdPolicyShow } from "./commands/policy.js";
@@ -180,12 +183,77 @@ export function buildProgram(deps: CliDeps): Command {
       },
     );
 
-  program
+  const audit = program
     .command("audit")
     .option("--tail <n>", "number of trailing lines to print", parsePositiveInt)
-    .description("Print the raw JSONL tail of the audit log.")
+    .description(
+      "Print the raw JSONL tail of the audit log. Use the subcommands for filtered listing, per-entry detail, and retention pruning.",
+    )
     .action(async (options: { tail?: number }) => {
       await cmdAudit(deps, options.tail !== undefined ? { tail: options.tail } : {});
+    });
+
+  audit
+    .command("show")
+    .argument("<id>", "request id of the audit entry")
+    .option("--json", "emit the full AuditEvent as JSON", false)
+    .description(
+      "Render one audit entry in full (sectioned terminal view, or --json for scripting).",
+    )
+    .action(async (id: string, options: { json: boolean }) => {
+      await cmdAuditShow(deps, { id, json: options.json });
+    });
+
+  audit
+    .command("list")
+    .option("--surface <name>", "filter by surface (cli|mcp_http_request|mcp_run_command)")
+    .option("--secret <name>", "filter by secret name")
+    .option("--status <s>", "filter by outcome (allowed|denied)")
+    .option("--code <code>", "filter by typed error code (e.g. POLICY_DENIED)")
+    .option("--since <ts>", "only entries at or after this ISO-8601 timestamp")
+    .option("--until <ts>", "only entries at or before this ISO-8601 timestamp")
+    .option("--limit <n>", "cap the number of returned entries", (v): number => parsePositiveInt(v))
+    .description("Filtered list of audit entries (one per line).")
+    .action(
+      async (options: {
+        surface?: string;
+        secret?: string;
+        status?: string;
+        code?: string;
+        since?: string;
+        until?: string;
+        limit?: number;
+      }) => {
+        const listOpts: Parameters<typeof cmdAuditList>[1] = {};
+        if (options.surface !== undefined) (listOpts as { surface: string }).surface = options.surface;
+        if (options.secret !== undefined) (listOpts as { secret: string }).secret = options.secret;
+        if (options.status !== undefined) (listOpts as { status: string }).status = options.status;
+        if (options.code !== undefined) (listOpts as { code: string }).code = options.code;
+        if (options.since !== undefined) (listOpts as { since: string }).since = options.since;
+        if (options.until !== undefined) (listOpts as { until: string }).until = options.until;
+        if (options.limit !== undefined) (listOpts as { limit: number }).limit = options.limit;
+        await cmdAuditList(deps, listOpts);
+      },
+    );
+
+  audit
+    .command("prune")
+    .option(
+      "--max-age-ms <ms>",
+      "retention age cap in milliseconds (default: 14 days)",
+      (v): number => parsePositiveInt(v),
+    )
+    .option(
+      "--max-bytes <bytes>",
+      "retention size cap in bytes (default: 64 MiB)",
+      (v): number => parsePositiveInt(v),
+    )
+    .description("Prune encrypted body blobs older than the retention window or beyond the size cap.")
+    .action(async (options: { maxAgeMs?: number; maxBytes?: number }) => {
+      const pruneOpts: Parameters<typeof cmdAuditPrune>[1] = {};
+      if (options.maxAgeMs !== undefined) (pruneOpts as { maxAgeMs: number }).maxAgeMs = options.maxAgeMs;
+      if (options.maxBytes !== undefined) (pruneOpts as { maxBytes: number }).maxBytes = options.maxBytes;
+      await cmdAuditPrune(deps, pruneOpts);
     });
 
   program

@@ -12,11 +12,23 @@
 
 import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { FileAuditLogger, type AuditEvent } from "../audit/index.js";
+import {
+  EncryptedBodyStore,
+  BodyStoreError,
+  FileAuditLogger,
+  buildRenderModel,
+  findEntryById,
+  readAuditEntries,
+  type AuditEvent,
+  type BodyBlobPayload,
+  type BuildRenderOptions,
+} from "../audit/index.js";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { RateLimiter } from "../ratelimit/index.js";
+import { listMerged, resolveSecret } from "../scope/index.js";
 import { listPolicyTemplates, policySchema, type Policy } from "../policy/index.js";
+import type { ScrubbableSecret } from "../scrub/index.js";
 import {
   discoverProjectVault,
   ensureProjectVault as ensureProjectVaultFn,
@@ -35,6 +47,7 @@ import { INDEX_HTML } from "./app.js";
 const SESSION_TTL_MS = 15 * 60 * 1000;
 const COOKIE_NAME = "secretproxy.session";
 const DEFAULT_PORT = 7381;
+const BODY_KEY_INFO = "secretproxy/audit-body-v1";
 
 export interface UiServerOptions {
   homedir: string;
@@ -445,6 +458,61 @@ export async function startUiServer(opts: UiServerOptions): Promise<UiServerHand
     sendJson(ctx.res, 200, { templates: entries });
   }
 
+  async function handleAuditDetail(
+    ctx: RequestContext,
+    session: Session,
+    id: string,
+  ): Promise<void> {
+    const entries = await readAuditEntries(path.join(auditBaseDir, "audit.log"));
+    const event = findEntryById(entries, id);
+    if (event === undefined) {
+      sendJson(ctx.res, 404, { error: `no audit entry with id '${id}'` });
+      return;
+    }
+    const inScope = collectSessionInScopeSecrets(session);
+    const buildOpts: BuildRenderOptions = {};
+    if (inScope.length > 0) {
+      (buildOpts as { inScopeSecrets: readonly ScrubbableSecret[] }).inScopeSecrets = inScope;
+    }
+    const keyHolder = session.global ?? session.project?.handle ?? null;
+    const bodyRef = event.body_ref;
+    if (keyHolder !== null && bodyRef !== undefined) {
+      const key = keyHolder.deriveSubkey(BODY_KEY_INFO);
+      const store = new EncryptedBodyStore({ baseDir: auditBaseDir, key });
+      try {
+        if (await store.hasBody(bodyRef.blob_id)) {
+          const payload: BodyBlobPayload = await store.readBody(bodyRef.blob_id);
+          (buildOpts as { bodies?: BodyBlobPayload }).bodies = payload;
+        } else {
+          (buildOpts as { pruned?: boolean }).pruned = true;
+        }
+      } catch (err) {
+        if (err instanceof BodyStoreError) {
+          (buildOpts as { bodiesError?: BodyStoreError }).bodiesError = err;
+        } else {
+          throw err;
+        }
+      }
+    }
+    const model = buildRenderModel(event, buildOpts);
+    sendJson(ctx.res, 200, { model, event });
+  }
+
+  function collectSessionInScopeSecrets(session: Session): readonly ScrubbableSecret[] {
+    const sources = {
+      global: session.global,
+      project: session.project?.handle ?? null,
+    };
+    const out: ScrubbableSecret[] = [];
+    for (const entry of listMerged(sources)) {
+      const r = resolveSecret(entry.name, sources);
+      if (r !== undefined) {
+        out.push({ name: r.name, value: r.value });
+      }
+    }
+    return out;
+  }
+
   async function handleAudit(ctx: RequestContext): Promise<void> {
     const logPath = path.join(auditBaseDir, "audit.log");
     let raw = "";
@@ -586,6 +654,12 @@ export async function startUiServer(opts: UiServerOptions): Promise<UiServerHand
 
         if (req.method === "GET" && pathname === "/api/audit") {
           await handleAudit(ctx);
+          return;
+        }
+
+        const auditDetailMatch = /^\/api\/audit\/([^/]+)$/.exec(pathname);
+        if (req.method === "GET" && auditDetailMatch !== null) {
+          await handleAuditDetail(ctx, session, decodeURIComponent(auditDetailMatch[1]!));
           return;
         }
 

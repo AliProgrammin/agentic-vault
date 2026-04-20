@@ -25,10 +25,25 @@ import { z } from "zod";
 import {
   createRequestId,
   AUDIT_DETAIL_CAP_BYTES,
+  DEFAULT_REQUEST_BODY_CAP_BYTES,
+  DEFAULT_RESPONSE_BODY_CAP_BYTES,
+  classifyBody,
+  classifyText,
   type AuditErrorCode,
   type AuditEvent,
   type AuditEventDetail,
+  type AuditHeader,
+  type AuditHttpRequest,
+  type AuditHttpResponse,
+  type AuditInjectedSecret,
   type AuditLogger,
+  type AuditPolicyDecision,
+  type AuditProcessContext,
+  type AuditRateLimitState,
+  type AuditTiming,
+  type BodyArtifact,
+  type BodyBlobPayload,
+  type EncryptedBodyStore,
 } from "../audit/index.js";
 import { checkHttp, policySchema, type Policy } from "../policy/index.js";
 import type { RateLimiter } from "../ratelimit/index.js";
@@ -43,6 +58,15 @@ export interface HttpRequestDeps extends McpServerDeps {
   readonly fetch?: typeof fetch;
   readonly requestTimeoutMs?: number;
   readonly clock?: () => number;
+  /**
+   * Optional encrypted body-blob store for F13's audit detail view. When
+   * present, the tool writes the (scrubbed, capped) request + response
+   * bodies to the store and attaches a `body_ref` to the allowed audit
+   * record. Absent in unit tests that only care about the summary record.
+   */
+  readonly bodyStore?: EncryptedBodyStore;
+  /** Injected in tests for deterministic process-context/argv. */
+  readonly processContextProvider?: () => AuditProcessContext;
 }
 
 const TOOL_NAME = "http_request";
@@ -124,6 +148,8 @@ interface PreparedInjection {
   into: "header" | "query";
   name: string;
   template: string;
+  scope: "global" | "project";
+  rateSnapshot?: AuditRateLimitState;
 }
 
 function truncate(s: string): string {
@@ -214,9 +240,15 @@ export async function runHttpRequest(
   const scrubFn = deps.scrub ?? defaultScrub;
   const fetchImpl: typeof fetch =
     deps.fetch ?? globalThis.fetch.bind(globalThis);
+  const clock = deps.clock ?? ((): number => Date.now());
   const timeoutMs = deps.requestTimeoutMs ?? DEFAULT_TIMEOUT_MS;
   const requestId = createRequestId();
   const callerCwd = process.cwd();
+  const receivedAt = new Date(clock()).toISOString();
+  const processContext: AuditProcessContext =
+    deps.processContextProvider !== undefined
+      ? deps.processContextProvider()
+      : { pid: process.pid, cwd: callerCwd, tool_name: TOOL_NAME };
 
   let parsedUrl: URL;
   try {
@@ -324,14 +356,25 @@ export async function runHttpRequest(
       };
     }
 
+    const rateSnapshot: AuditRateLimitState | undefined = rateDecision.allowed
+      ? {
+          remaining: Math.max(0, Math.floor(policy.rate_limit.requests)),
+          capacity: policy.rate_limit.requests,
+          window_seconds: policy.rate_limit.window_seconds,
+        }
+      : undefined;
     prepared.push({
       secretName: inj.secret,
       value: resolved.value,
       into: inj.into,
       name: inj.name,
       template: inj.template,
+      scope: resolved.scope,
+      ...(rateSnapshot !== undefined ? { rateSnapshot } : {}),
     });
   }
+
+  const policyCheckedAt = new Date(clock()).toISOString();
 
   const finalHeaders = new Headers();
   if (input.headers) {
@@ -361,6 +404,7 @@ export async function runHttpRequest(
   const timeoutHandle = setTimeout(() => {
     controller.abort();
   }, timeoutMs);
+  const upstreamStartedAt = new Date(clock()).toISOString();
   let response: Response;
   try {
     const init: RequestInit = {
@@ -411,6 +455,7 @@ export async function runHttpRequest(
     response,
     RESPONSE_BODY_CAP_BYTES,
   );
+  const upstreamFinishedAt = new Date(clock()).toISOString();
   const rawBody = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
   const scrubbedBody = scrubFn(rawBody, scrubSecrets);
 
@@ -433,16 +478,169 @@ export async function runHttpRequest(
     response_status: response.status,
     response_body: truncate(scrubbedBody),
   };
+
+  // ── F13 enrichment ────────────────────────────────────────────────────
+  // Classify + cap + persist bodies to the encrypted body store.
+  // Metadata (scrubbed headers + status + sizes) lives on the plaintext
+  // JSONL entry so filtering does not require unlock.
+
+  // Track which header names were populated by an injected secret so the
+  // UI can badge them as "scrubbed" without relying on color alone.
+  const injectedHeaderNames = new Set(
+    prepared
+      .filter((p) => p.into === "header")
+      .map((p) => p.name.toLowerCase()),
+  );
+  const scrubbedRequestHeaders: AuditHeader[] = [];
+  for (const [k, v] of finalHeaders.entries()) {
+    scrubbedRequestHeaders.push({
+      name: scrubFn(k, scrubSecrets),
+      value: scrubFn(v, scrubSecrets),
+      scrubbed: injectedHeaderNames.has(k.toLowerCase()),
+    });
+  }
+  const scrubbedResponseHeaders: AuditHeader[] = [];
+  for (const [k, v] of response.headers.entries()) {
+    scrubbedResponseHeaders.push({
+      name: scrubFn(k, scrubSecrets),
+      value: scrubFn(v, scrubSecrets),
+      scrubbed: false,
+    });
+  }
+
+  const contentType = response.headers.get("content-type") ?? undefined;
+  const responseArtifact: BodyArtifact = classifyBody(bytes, {
+    cap: DEFAULT_RESPONSE_BODY_CAP_BYTES,
+    ...(contentType !== undefined ? { contentType } : {}),
+  });
+  const requestArtifact: BodyArtifact | undefined =
+    scrubbedRequestBody !== undefined
+      ? classifyText(scrubbedRequestBody, {
+          cap: DEFAULT_REQUEST_BODY_CAP_BYTES,
+        })
+      : undefined;
+  // Scrub artifacts: if text, scrub the text; binary placeholders have no
+  // plaintext to scrub but apply scrub to the sha256 line to defend against
+  // a secret that happens to look like hex.
+  const scrubbedResponseArtifact: BodyArtifact =
+    responseArtifact.kind === "text"
+      ? {
+          kind: "text",
+          text: scrubFn(responseArtifact.text, scrubSecrets),
+          original_bytes: responseArtifact.original_bytes,
+          truncated: responseArtifact.truncated,
+          truncated_bytes: responseArtifact.truncated_bytes,
+        }
+      : responseArtifact;
+
+  const requestView: AuditHttpRequest = {
+    method: input.method,
+    url: scrubFn(finalUrl.toString(), scrubSecrets),
+    headers: scrubbedRequestHeaders,
+    ...(requestArtifact !== undefined && requestArtifact.kind === "text"
+      ? { body_size: requestArtifact.original_bytes }
+      : requestArtifact !== undefined && requestArtifact.kind === "binary"
+        ? { body_size: requestArtifact.bytes }
+        : {}),
+  };
+  const responseView: AuditHttpResponse = {
+    status: response.status,
+    headers: scrubbedResponseHeaders,
+    body_size:
+      scrubbedResponseArtifact.kind === "text"
+        ? scrubbedResponseArtifact.original_bytes
+        : scrubbedResponseArtifact.kind === "binary"
+          ? scrubbedResponseArtifact.bytes
+          : 0,
+  };
+
+  const injectedSecretsList: AuditInjectedSecret[] = prepared.map((p) => ({
+    secret_name: p.secretName,
+    scope: p.scope,
+    target: p.into === "header" ? p.name : `query:${p.name}`,
+  }));
+
+  const policyDecision: AuditPolicyDecision = {
+    outcome: "allowed",
+  };
+
+  const returnedAt = new Date(clock()).toISOString();
+  const timing: AuditTiming = {
+    received_at: receivedAt,
+    policy_checked_at: policyCheckedAt,
+    upstream_started_at: upstreamStartedAt,
+    upstream_finished_at: upstreamFinishedAt,
+    returned_at: returnedAt,
+  };
+  const firstRate = prepared.find((p) => p.rateSnapshot !== undefined)?.rateSnapshot;
+
+  // Write the body blob (scrubbed + capped) if the store is present.
+  let blobWritten = false;
+  if (deps.bodyStore !== undefined) {
+    const payload: BodyBlobPayload = {
+      ...(requestArtifact !== undefined
+        ? {
+            request:
+              requestArtifact.kind === "text"
+                ? {
+                    kind: "text",
+                    text: scrubFn(requestArtifact.text, scrubSecrets),
+                    original_bytes: requestArtifact.original_bytes,
+                    truncated: requestArtifact.truncated,
+                    truncated_bytes: requestArtifact.truncated_bytes,
+                  }
+                : requestArtifact,
+          }
+        : {}),
+      response: scrubbedResponseArtifact,
+    };
+    try {
+      await deps.bodyStore.writeBody(requestId, payload);
+      blobWritten = true;
+    } catch {
+      // If the body store fails, the metadata record is still written;
+      // the render view will show "not captured" for the body section.
+    }
+  }
+
+  const f13Extras = {
+    surface: "mcp_http_request" as const,
+    request: requestView,
+    response: responseView,
+    injected_secrets: injectedSecretsList,
+    policy_decision: policyDecision,
+    timing,
+    process_context: processContext,
+    ...(firstRate !== undefined ? { rate_limit_state: firstRate } : {}),
+    ...(blobWritten ? { body_ref: { blob_id: requestId } } : {}),
+  };
+
   for (const p of prepared) {
-    await recordAudit(p.secretName, "allowed", { detail });
+    await recordAuditExtended(
+      deps.audit,
+      { requestId, callerCwd, secretName: p.secretName, target, outcome: "allowed" },
+      { detail },
+      f13Extras,
+    );
   }
   if (truncated) {
     const annotationSecret = prepared[0];
     if (annotationSecret) {
-      await recordAudit(annotationSecret.secretName, "allowed", {
-        code: "SIZE_LIMIT",
-        reason: `response body exceeded ${String(RESPONSE_BODY_CAP_BYTES)} bytes and was truncated`,
-      });
+      await recordAuditExtended(
+        deps.audit,
+        {
+          requestId,
+          callerCwd,
+          secretName: annotationSecret.secretName,
+          target,
+          outcome: "allowed",
+        },
+        {
+          code: "SIZE_LIMIT",
+          reason: `response body exceeded ${String(RESPONSE_BODY_CAP_BYTES)} bytes and was truncated`,
+        },
+        f13Extras,
+      );
     }
   }
 
@@ -453,6 +651,27 @@ export async function runHttpRequest(
     body: scrubbedBody,
     truncated,
   };
+}
+
+// Local helper that layers F13 fields on top of the legacy event shape.
+async function recordAuditExtended(
+  logger: AuditLogger,
+  base: {
+    requestId: string;
+    callerCwd: string;
+    secretName: string;
+    target: string;
+    outcome: "allowed" | "denied";
+  },
+  extra: {
+    code?: AuditErrorCode;
+    reason?: string;
+    detail?: AuditEventDetail;
+  },
+  f13: Partial<AuditEvent>,
+): Promise<void> {
+  const built = buildEvent(base, extra);
+  await logger.record({ ...built, ...f13 });
 }
 
 export function registerHttpRequest(
