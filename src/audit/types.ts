@@ -113,6 +113,19 @@ export interface AuditCommandResponse {
   readonly stderr_truncated?: boolean;
 }
 
+/**
+ * Structural record attached to an audit event when the allowed request was
+ * authorized via a wildcarded policy entry. Absent when the match was exact
+ * or the request was denied. The pattern is the raw literal as stored in the
+ * policy (e.g. `"*.example.com"`); `kind` is the classification emitted by
+ * `src/policy/schema.ts`. Lives in the plaintext JSONL so operators can grep
+ * for wildcard-allowed traffic without unlocking the body blob store.
+ */
+export interface AuditWildcardMatch {
+  readonly pattern: string;
+  readonly kind: "unrestricted" | "subdomain" | "affix";
+}
+
 export interface AuditEvent {
   ts: string;
   secret_name: string;
@@ -123,6 +136,7 @@ export interface AuditEvent {
   code?: AuditErrorCode;
   request_id: string;
   caller_cwd: string;
+  wildcard_matched?: AuditWildcardMatch;
   /**
    * Optional per-tool detail payload. Values are ALWAYS scrubbed — every
    * in-scope secret replaced with [REDACTED:NAME] before the event is

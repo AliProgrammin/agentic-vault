@@ -12,6 +12,7 @@
 
 import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { ZodError } from "zod";
 import {
   EncryptedBodyStore,
   BodyStoreError,
@@ -27,7 +28,7 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { RateLimiter } from "../ratelimit/index.js";
 import { listMerged, resolveSecret } from "../scope/index.js";
-import { listPolicyTemplates, policySchema, type Policy } from "../policy/index.js";
+import { listPolicyTemplates, validatePolicy, type Policy } from "../policy/index.js";
 import type { ScrubbableSecret } from "../scrub/index.js";
 import {
   discoverProjectVault,
@@ -331,18 +332,6 @@ export async function startUiServer(opts: UiServerOptions): Promise<UiServerHand
       sendJson(ctx.res, 400, { error: "name and value required" });
       return;
     }
-    let policyParsed: Policy | undefined;
-    if (body?.policy !== undefined && body.policy !== null) {
-      const parsed = policySchema.safeParse(body.policy);
-      if (!parsed.success) {
-        sendJson(ctx.res, 400, {
-          error: "invalid policy",
-          details: parsed.error.issues,
-        });
-        return;
-      }
-      policyParsed = parsed.data;
-    }
     let handle: VaultHandle | null = null;
     let vaultPath = "";
     if (scope === "project") {
@@ -365,6 +354,20 @@ export async function startUiServer(opts: UiServerOptions): Promise<UiServerHand
       }
       handle = session.global;
       vaultPath = globalVaultPath;
+    }
+    let policyParsed: Policy | undefined;
+    if (body?.policy !== undefined && body.policy !== null) {
+      const parsed = validatePolicy(body.policy, {
+        strictMode: handle.getStrictMode(),
+      });
+      if (parsed instanceof ZodError) {
+        sendJson(ctx.res, 400, {
+          error: "invalid policy",
+          details: parsed.issues,
+        });
+        return;
+      }
+      policyParsed = parsed;
     }
     handle.set(name, value, policyParsed);
     await handle.save();
@@ -438,9 +441,11 @@ export async function startUiServer(opts: UiServerOptions): Promise<UiServerHand
       sendJson(ctx.res, 200, { ok: true });
       return;
     }
-    const parsed = policySchema.safeParse(body.policy);
-    if (!parsed.success) {
-      sendJson(ctx.res, 400, { error: "invalid policy", details: parsed.error.issues });
+    const parsed = validatePolicy(body.policy, {
+      strictMode: handle.getStrictMode(),
+    });
+    if (parsed instanceof ZodError) {
+      sendJson(ctx.res, 400, { error: "invalid policy", details: parsed.issues });
       return;
     }
     const value = handle.get(name);
@@ -448,7 +453,7 @@ export async function startUiServer(opts: UiServerOptions): Promise<UiServerHand
       sendJson(ctx.res, 500, { error: "internal: value missing" });
       return;
     }
-    handle.set(name, value, parsed.data);
+    handle.set(name, value, parsed);
     await handle.save();
     sendJson(ctx.res, 200, { ok: true });
   }

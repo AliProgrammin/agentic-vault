@@ -99,19 +99,20 @@ export async function cmdPolicySet(
         ...(opts.rate !== undefined ? { rate: opts.rate } : {}),
       });
 
-  const validated = validatePolicy(candidate);
-  if (validated instanceof ZodError) {
-    throw new CliError(
-      EXIT_USER,
-      `policy validation failed:\n${formatZodError(validated)}`,
-    );
-  }
-
   const password = deps.resolvePassword();
   const handle = opts.project
     ? await openProjectVault(deps, password)
     : await openGlobalVault(deps, password);
   try {
+    const validated = validatePolicy(candidate, {
+      strictMode: handle.getStrictMode(),
+    });
+    if (validated instanceof ZodError) {
+      throw new CliError(
+        EXIT_USER,
+        `policy validation failed:\n${formatZodError(validated)}`,
+      );
+    }
     const value = handle.get(key);
     if (value === undefined) {
       throw new CliError(EXIT_USER, `secret not found: ${key}`);

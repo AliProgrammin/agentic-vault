@@ -19,6 +19,7 @@ export {
   type AuditCommandRequest,
   type AuditCommandResponse,
   type AuditHeader,
+  type AuditWildcardMatch,
 } from "./types.js";
 export { FileAuditLogger, type FileAuditLoggerOptions } from "./file-logger.js";
 export { InMemoryAuditLogger } from "./in-memory-logger.js";

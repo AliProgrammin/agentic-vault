@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { policySchema } from "./schema.js";
+import { entryValue, policySchema } from "./schema.js";
 import {
   DEFAULT_POLICIES,
   listPolicyTemplates,
@@ -17,10 +17,10 @@ describe("DEFAULT_POLICIES", () => {
   it("no template contains '*' in hosts or binaries", () => {
     for (const [name, p] of Object.entries(DEFAULT_POLICIES)) {
       for (const host of p.allowed_http_hosts) {
-        expect(host.includes("*"), `${name} host`).toBe(false);
+        expect(entryValue(host).includes("*"), `${name} host`).toBe(false);
       }
       for (const cmd of p.allowed_commands) {
-        expect(cmd.binary.includes("*"), `${name} binary`).toBe(false);
+        expect(entryValue(cmd.binary).includes("*"), `${name} binary`).toBe(false);
       }
     }
   });

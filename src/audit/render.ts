@@ -31,6 +31,7 @@ import type {
   AuditHeader,
   AuditHttpRequest,
   AuditHttpResponse,
+  AuditWildcardMatch,
 } from "./types.js";
 
 export type SectionStatus = "present" | "not_captured" | "pruned" | "decrypt_failed";
@@ -127,6 +128,12 @@ export interface RenderModel {
   readonly injected_secrets: readonly RenderInjectedSecret[];
   readonly request: RenderRequestView;
   readonly response: RenderResponseView;
+  /**
+   * Populated only when the allowed request was authorized via a
+   * wildcarded policy entry. Absence is meaningful — the CLI and TUI
+   * surfaces both render NO badge when this field is missing.
+   */
+  readonly wildcard_matched?: AuditWildcardMatch;
 }
 
 export interface BuildRenderOptions {
@@ -341,6 +348,9 @@ export function buildRenderModel(
     injected_secrets: injected,
     request,
     response,
+    ...(event.wildcard_matched !== undefined
+      ? { wildcard_matched: event.wildcard_matched }
+      : {}),
   };
   return model;
 }

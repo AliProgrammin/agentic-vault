@@ -10,6 +10,7 @@
 // from the scrubber) AND with an inverse-video run when colored, so the
 // distinction is conveyable without color.
 
+import { wildcardBadge } from "../policy/badges.js";
 import type { AuditHeader } from "./types.js";
 import type {
   RenderBodySection,
@@ -66,6 +67,14 @@ export function formatAuditDetail(
     );
   }
   section("Injected secrets", renderInjected(model, color));
+  if (model.wildcard_matched !== undefined) {
+    const wm = model.wildcard_matched;
+    const badge = wildcardBadge(wm.kind, { tty: color });
+    section(
+      "Wildcard match",
+      `pattern: ${wm.pattern}  ${badge}\nkind:    ${wm.kind}`,
+    );
+  }
   section(
     "Policy",
     `outcome: ${model.outcome}${model.code !== undefined ? ` (${model.code})` : ""}${model.reason !== undefined ? `\nreason: ${model.reason}` : ""}`,

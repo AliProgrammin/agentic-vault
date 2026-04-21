@@ -65,18 +65,31 @@ export class PoisonedTTY implements TTYInterface {
   public promptHidden(): Promise<string> {
     throw new Error("poisoned TTY: promptHidden must not be called");
   }
+  public promptConfirm(): Promise<boolean> {
+    throw new Error("poisoned TTY: promptConfirm must not be called");
+  }
 }
 
 export class ScriptedTTY implements TTYInterface {
   public stdinIsTTYResult: boolean;
   public readStdinResult: string;
   public prompts: string[] = [];
+  public confirmPrompts: string[] = [];
+  public confirmResponses: boolean[] = [];
 
-  constructor(opts: { isTTY: boolean; stdin?: string; prompts?: string[] }) {
+  constructor(opts: {
+    isTTY: boolean;
+    stdin?: string;
+    prompts?: string[];
+    confirmResponses?: boolean[];
+  }) {
     this.stdinIsTTYResult = opts.isTTY;
     this.readStdinResult = opts.stdin ?? "";
     if (opts.prompts !== undefined) {
       this.prompts = [...opts.prompts];
+    }
+    if (opts.confirmResponses !== undefined) {
+      this.confirmResponses = [...opts.confirmResponses];
     }
   }
 
@@ -92,6 +105,15 @@ export class ScriptedTTY implements TTYInterface {
     const next = this.prompts.shift();
     if (next === undefined) {
       throw new Error("ScriptedTTY: no more prompts scripted");
+    }
+    return next;
+  }
+
+  public async promptConfirm(prompt: string): Promise<boolean> {
+    this.confirmPrompts.push(prompt);
+    const next = this.confirmResponses.shift();
+    if (next === undefined) {
+      throw new Error("ScriptedTTY: no more confirm responses scripted");
     }
     return next;
   }

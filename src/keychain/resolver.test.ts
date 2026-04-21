@@ -130,17 +130,21 @@ class RecordingTTY implements TTYInterface {
   public stdinIsTTYReturn: boolean;
   public stdinReadReturn: string;
   public readonly prompts: string[] = [];
+  public readonly confirmPrompts: string[] = [];
   public readonly responses: string[];
+  public readonly confirmResponses: boolean[];
   public readStdinCalls = 0;
 
   public constructor(options: {
     isTTY: boolean;
     stdinReturn?: string;
     responses?: string[];
+    confirmResponses?: boolean[];
   }) {
     this.stdinIsTTYReturn = options.isTTY;
     this.stdinReadReturn = options.stdinReturn ?? "";
     this.responses = options.responses ?? [];
+    this.confirmResponses = options.confirmResponses ?? [];
   }
 
   public stdinIsTTY(): boolean {
@@ -157,6 +161,15 @@ class RecordingTTY implements TTYInterface {
     const next = this.responses.shift();
     if (next === undefined) {
       throw new Error("RecordingTTY: no queued response for prompt: " + prompt);
+    }
+    return next;
+  }
+
+  public async promptConfirm(prompt: string): Promise<boolean> {
+    this.confirmPrompts.push(prompt);
+    const next = this.confirmResponses.shift();
+    if (next === undefined) {
+      throw new Error("RecordingTTY: no queued confirm response for prompt: " + prompt);
     }
     return next;
   }

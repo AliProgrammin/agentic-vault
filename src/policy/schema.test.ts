@@ -1,13 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { ZodError } from "zod";
 import {
+  makePolicySchema,
   policySchema,
   validatePolicy,
   FORBIDDEN_ENV_VAR_NAMES,
-  type Policy,
 } from "./index.js";
 
-function wellFormedPolicy(): Policy {
+const strictPolicySchema = makePolicySchema({ strictMode: true });
+
+function wellFormedPolicy() {
   return {
     allowed_http_hosts: ["api.example.com"],
     allowed_commands: [
@@ -58,7 +60,7 @@ describe("policy schema", () => {
   it("rejects wildcard '*' host", () => {
     const policy = wellFormedPolicy();
     policy.allowed_http_hosts = ["*"];
-    const result = policySchema.safeParse(policy);
+    const result = strictPolicySchema.safeParse(policy);
     expect(result.success).toBe(false);
   });
 
@@ -101,7 +103,7 @@ describe("policy schema", () => {
   it("rejects wildcard '*' binary", () => {
     const policy = wellFormedPolicy();
     policy.allowed_commands = [{ binary: "*", allowed_args_patterns: ["^deploy$"] }];
-    expect(policySchema.safeParse(policy).success).toBe(false);
+    expect(strictPolicySchema.safeParse(policy).success).toBe(false);
   });
 
   it("rejects binary containing '*'", () => {

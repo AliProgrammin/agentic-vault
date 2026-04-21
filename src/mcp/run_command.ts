@@ -32,6 +32,7 @@ import {
   policySchema,
   FORBIDDEN_ENV_VAR_NAMES,
   type Policy,
+  type WildcardMatch,
 } from "../policy/index.js";
 import { scrub, type ScrubbableSecret } from "../scrub/index.js";
 import {
@@ -360,6 +361,11 @@ export async function runRunCommand(
   const injections: Record<string, string> = {};
   const scopeByTarget = new Map<string, "global" | "project">();
   const rateByTarget = new Map<string, AuditRateLimitState>();
+  // If either the binary or the env var target was matched via a wildcard
+  // entry, record it. Command wildcard wins over env-var wildcard when
+  // both are present — command is the coarser-grained, more impactful
+  // wildcard so it is the more useful signal to surface to operators.
+  const wildcardByTarget = new Map<string, WildcardMatch>();
   for (const [targetName, secretName] of injectEntries) {
     const resolved = resolveSecret(secretName, deps.sources);
     if (!resolved) {
@@ -381,6 +387,7 @@ export async function runRunCommand(
       });
       return { ok: false, code: "POLICY_DENIED", reason: cmdDecision.reason };
     }
+    const cmdWildcard: WildcardMatch | undefined = cmdDecision.wildcard_matched;
 
     const envDecision = checkEnvInjection(policy, targetName);
     if (!envDecision.allowed) {
@@ -417,6 +424,10 @@ export async function runRunCommand(
       capacity: policy.rate_limit.requests,
       window_seconds: policy.rate_limit.window_seconds,
     });
+    const wm = cmdWildcard ?? envDecision.wildcard_matched;
+    if (wm !== undefined) {
+      wildcardByTarget.set(targetName, wm);
+    }
   }
 
   const policyCheckedAt = nowIso(clock);
@@ -563,7 +574,14 @@ export async function runRunCommand(
     ...(blobWritten ? { body_ref: { blob_id: requestId } } : {}),
   };
 
-  for (const [, secretName] of injectEntries) {
+  for (const [targetName, secretName] of injectEntries) {
+    const wm = wildcardByTarget.get(targetName);
+    const perRowExtras: Partial<AuditEvent> = {
+      ...f13Allowed,
+      ...(wm !== undefined
+        ? { wildcard_matched: { pattern: wm.pattern, kind: wm.kind } }
+        : {}),
+    };
     await recordAuditExtended(
       deps.audit,
       clock,
@@ -572,7 +590,7 @@ export async function runRunCommand(
       command,
       "allowed",
       { detail: allowedDetail },
-      f13Allowed,
+      perRowExtras,
     );
   }
 
@@ -584,7 +602,14 @@ export async function runRunCommand(
           ? "stdout"
           : "stderr";
     const reason = `${which} truncated at ${String(MAX_OUTPUT_BYTES)} bytes`;
-    for (const [, secretName] of injectEntries) {
+    for (const [targetName, secretName] of injectEntries) {
+      const wm = wildcardByTarget.get(targetName);
+      const perRowExtras: Partial<AuditEvent> = {
+        ...f13Allowed,
+        ...(wm !== undefined
+          ? { wildcard_matched: { pattern: wm.pattern, kind: wm.kind } }
+          : {}),
+      };
       await recordAuditExtended(
         deps.audit,
         clock,
@@ -593,7 +618,7 @@ export async function runRunCommand(
         command,
         "denied",
         { code: "SIZE_LIMIT", reason },
-        f13Allowed,
+        perRowExtras,
       );
     }
   }

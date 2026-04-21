@@ -45,7 +45,7 @@ import {
   type BodyBlobPayload,
   type EncryptedBodyStore,
 } from "../audit/index.js";
-import { checkHttp, policySchema, type Policy } from "../policy/index.js";
+import { checkHttp, policySchema, type Policy, type WildcardMatch } from "../policy/index.js";
 import type { RateLimiter } from "../ratelimit/index.js";
 import { listMerged, resolveSecret } from "../scope/index.js";
 import { scrub as defaultScrub, type ScrubbableSecret } from "../scrub/index.js";
@@ -150,6 +150,7 @@ interface PreparedInjection {
   template: string;
   scope: "global" | "project";
   rateSnapshot?: AuditRateLimitState;
+  wildcardMatch?: WildcardMatch;
 }
 
 function truncate(s: string): string {
@@ -323,6 +324,8 @@ export async function runHttpRequest(
         secret_name: inj.secret,
       };
     }
+    const httpWildcard: WildcardMatch | undefined =
+      httpDecision.wildcard_matched;
 
     if (!policy) {
       // Unreachable — checkHttp denies when policy is undefined — but this
@@ -371,6 +374,7 @@ export async function runHttpRequest(
       template: inj.template,
       scope: resolved.scope,
       ...(rateSnapshot !== undefined ? { rateSnapshot } : {}),
+      ...(httpWildcard !== undefined ? { wildcardMatch: httpWildcard } : {}),
     });
   }
 
@@ -612,16 +616,38 @@ export async function runHttpRequest(
   };
 
   for (const p of prepared) {
+    const perRowExtras: Partial<AuditEvent> = {
+      ...f13Extras,
+      ...(p.wildcardMatch !== undefined
+        ? {
+            wildcard_matched: {
+              pattern: p.wildcardMatch.pattern,
+              kind: p.wildcardMatch.kind,
+            },
+          }
+        : {}),
+    };
     await recordAuditExtended(
       deps.audit,
       { requestId, callerCwd, secretName: p.secretName, target, outcome: "allowed" },
       { detail },
-      f13Extras,
+      perRowExtras,
     );
   }
   if (truncated) {
     const annotationSecret = prepared[0];
     if (annotationSecret) {
+      const perRowExtras: Partial<AuditEvent> = {
+        ...f13Extras,
+        ...(annotationSecret.wildcardMatch !== undefined
+          ? {
+              wildcard_matched: {
+                pattern: annotationSecret.wildcardMatch.pattern,
+                kind: annotationSecret.wildcardMatch.kind,
+              },
+            }
+          : {}),
+      };
       await recordAuditExtended(
         deps.audit,
         {
@@ -635,7 +661,7 @@ export async function runHttpRequest(
           code: "SIZE_LIMIT",
           reason: `response body exceeded ${String(RESPONSE_BODY_CAP_BYTES)} bytes and was truncated`,
         },
-        f13Extras,
+        perRowExtras,
       );
     }
   }

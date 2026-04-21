@@ -18,6 +18,7 @@ import {
   type AuditOutcome,
   type AuditSurface,
 } from "../../audit/index.js";
+import { wildcardBadgeCompact } from "../../policy/index.js";
 import { CliError, EXIT_USER } from "../errors.js";
 import type { CliDeps } from "../types.js";
 
@@ -91,8 +92,12 @@ export async function cmdAuditList(
     const surface = ev.surface ?? "-";
     const outcome = ev.outcome;
     const code = ev.code ?? "-";
+    const badge =
+      ev.wildcard_matched !== undefined
+        ? `${wildcardBadgeCompact(ev.wildcard_matched.kind, { tty: false })} `
+        : "";
     deps.stdout(
-      `${ev.ts}  ${ev.request_id}  ${surface}  ${outcome}  ${code}  ${ev.secret_name}  ${ev.target}\n`,
+      `${badge}${ev.ts}  ${ev.request_id}  ${surface}  ${outcome}  ${code}  ${ev.secret_name}  ${ev.target}\n`,
     );
   }
 }

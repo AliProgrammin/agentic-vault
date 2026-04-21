@@ -40,10 +40,25 @@ export interface PublicSecretRecord {
 interface VaultPayload {
   version: 1;
   secrets: Record<string, SecretRecord>;
+  /**
+   * When true, the policy schema rejects any entry that would parse as a
+   * wildcard. Newly-initialized vaults default to `true` (most secure).
+   * Existing vaults written before this field was introduced read as `true`
+   * on load — the safest default since no wildcarded policies could have
+   * been stored (the prior schema rejected wildcards outright).
+   */
+  strict_mode: boolean;
 }
 
 export interface CreateVaultOptions {
   kdfParams?: KdfParams;
+  /**
+   * Initial value for the vault's strict_mode flag. Defaults to `true`
+   * (reject wildcard policy entries at schema validation). `secretproxy init`
+   * relies on this default; operators can flip it later via direct vault
+   * config edits — no migration is performed.
+   */
+  strictMode?: boolean;
 }
 
 const LOCK_OPTIONS: lockfile.LockOptions = {
@@ -79,6 +94,17 @@ function parsePayload(bytes: Buffer): VaultPayload {
   if (secrets === null || typeof secrets !== "object") {
     throw new VaultFormatError("payload.secrets missing");
   }
+  // Missing `strict_mode` on pre-F14 vaults defaults to `true` — see field
+  // comment on VaultPayload for rationale.
+  const rawStrict = obj["strict_mode"];
+  let strictMode: boolean;
+  if (rawStrict === undefined) {
+    strictMode = true;
+  } else if (typeof rawStrict === "boolean") {
+    strictMode = rawStrict;
+  } else {
+    throw new VaultFormatError("payload.strict_mode must be a boolean when present");
+  }
   const out: Record<string, SecretRecord> = {};
   for (const [k, v] of Object.entries(secrets as Record<string, unknown>)) {
     if (v === null || typeof v !== "object") {
@@ -101,7 +127,7 @@ function parsePayload(bytes: Buffer): VaultPayload {
     }
     out[k] = record;
   }
-  return { version: 1, secrets: out };
+  return { version: 1, secrets: out, strict_mode: strictMode };
 }
 
 function serializePayload(payload: VaultPayload): Buffer {
@@ -117,7 +143,11 @@ function serializePayload(payload: VaultPayload): Buffer {
     }
     secretsOut[k] = rec;
   }
-  const json = JSON.stringify({ version: 1, secrets: secretsOut });
+  const json = JSON.stringify({
+    version: 1,
+    secrets: secretsOut,
+    strict_mode: payload.strict_mode,
+  });
   return Buffer.from(json, "utf8");
 }
 
@@ -277,6 +307,23 @@ export class VaultHandle {
   }
 
   /**
+   * Returns the vault-level strict_mode flag. Consumed by `policy set` to
+   * decide whether wildcard entries are accepted at parse time.
+   */
+  public getStrictMode(): boolean {
+    this.assertOpen();
+    return this.payload.strict_mode;
+  }
+
+  /**
+   * Flip the strict_mode flag. Persisted on the next `save()`.
+   */
+  public setStrictMode(value: boolean): void {
+    this.assertOpen();
+    this.payload.strict_mode = value;
+  }
+
+  /**
    * Derive a subkey for use by adjacent encrypted stores (e.g. the F13
    * encrypted-body-blob store). Uses HKDF-SHA-256 with a fixed info
    * string so callers cannot collide on the same subkey by accident.
@@ -319,7 +366,11 @@ export async function createVault(
   const params = opts.kdfParams ?? DEFAULT_KDF_PARAMS;
   const salt = crypto.randomBytes(DEFAULT_SALT_LENGTH);
   const key = await deriveKey(password, salt, params);
-  const payload: VaultPayload = { version: 1, secrets: {} };
+  const payload: VaultPayload = {
+    version: 1,
+    secrets: {},
+    strict_mode: opts.strictMode ?? true,
+  };
   await writeEnvelope(filePath, key, salt, params, payload);
   return new VaultHandle(filePath, key, salt, params, payload);
 }
