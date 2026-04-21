@@ -249,12 +249,12 @@
 
     /* where it sits — architecture diagram */
     .arch{
-      display:grid;grid-template-columns:1fr 56px 1.15fr 56px 1fr;gap:14px;
-      align-items:stretch;max-width:1080px;margin:0 auto;
+      display:grid;grid-template-columns:1fr 104px 1.05fr 104px 1fr;gap:8px;
+      align-items:stretch;max-width:1100px;margin:0 auto;
     }
     @media(max-width:900px){
       .arch{grid-template-columns:1fr;gap:18px}
-      .arch-arrow{transform:rotate(90deg);justify-self:center}
+      .arch-arrow{transform:rotate(90deg);justify-self:center;min-height:120px}
     }
     .arch-col{
       background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,0));
@@ -276,17 +276,20 @@
       font-size:13px;color:#cbd5e1;transition:border-color .25s,background .25s;
     }
     .agent:hover,.api:hover{border-color:#3730a3;background:rgba(99,102,241,.05)}
-    .agent-dot{width:8px;height:8px;border-radius:50%;background:#6366f1;flex-shrink:0;box-shadow:0 0 10px rgba(99,102,241,.6)}
-    .api img{
-      width:18px;height:18px;flex-shrink:0;opacity:.72;transition:opacity .25s,filter .25s;
-      filter:grayscale(100%) brightness(1.1);
+    .api-mark,.agent-mark{
+      width:20px;height:20px;flex-shrink:0;display:grid;place-items:center;color:#a78bfa;
+      transition:color .25s,transform .25s;
     }
-    .api:hover img{opacity:1;filter:none}
-    .api span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .api-mark svg,.agent-mark svg,.api-mark img,.agent-mark img{
+      width:18px;height:18px;display:block;color:inherit;
+    }
+    .api-mark img,.agent-mark img{filter:none}
+    .api:hover .api-mark,.agent:hover .agent-mark{color:#c4b5fd;transform:scale(1.08)}
+    .api span,.agent span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
     .arch-center{
       align-items:center;justify-content:center;text-align:center;
-      border-color:rgba(99,102,241,.35);
+      border-color:rgba(99,102,241,.35);padding:28px 22px;
       background:
         radial-gradient(circle at 50% 30%,rgba(99,102,241,.12),transparent 60%),
         linear-gradient(180deg,#0d0e15,#0a0b11);
@@ -297,60 +300,49 @@
       content:"";position:absolute;inset:-1px;border-radius:16px;padding:1px;pointer-events:none;
       background:linear-gradient(135deg,rgba(167,139,250,.4),transparent 40%,rgba(99,102,241,.3));
       -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
-      -webkit-mask-composite:xor;mask-composite:exclude;
-      opacity:.8;
+      -webkit-mask-composite:xor;mask-composite:exclude;opacity:.8;
     }
     .arch-vault-mark{
-      width:56px;height:56px;border-radius:14px;
+      width:64px;height:64px;border-radius:16px;
       background:conic-gradient(from 220deg,#6366f1,#a78bfa,#0ea5e9,#6366f1);
-      box-shadow:0 0 40px rgba(124,58,237,.55);
-      display:grid;place-items:center;margin-bottom:18px;position:relative;z-index:1;
+      box-shadow:0 0 44px rgba(124,58,237,.6),inset 0 0 0 1px rgba(255,255,255,.08);
+      display:grid;place-items:center;margin-bottom:20px;position:relative;z-index:1;
     }
-    .arch-vault-mark svg{width:34px;height:34px}
+    .arch-vault-mark svg{width:40px;height:40px}
     .arch-center h3{
-      font-size:20px;font-weight:600;letter-spacing:-.01em;margin-bottom:8px;position:relative;z-index:1;
+      font-size:22px;font-weight:600;letter-spacing:-.02em;margin-bottom:14px;position:relative;z-index:1;
     }
-    .arch-center .arch-meta{
-      font-family:"JetBrains Mono",monospace;font-size:11px;color:#9ca3af;
-      line-height:1.8;position:relative;z-index:1;
+    .arch-pill{
+      display:inline-flex;align-items:center;gap:8px;
+      padding:6px 14px;border-radius:999px;
+      background:rgba(16,185,129,.08);border:1px solid rgba(52,211,153,.28);
+      color:#6ee7b7;font-size:11.5px;font-family:"JetBrains Mono",monospace;
+      position:relative;z-index:1;letter-spacing:.05em;
     }
-    .arch-center .arch-pill{
-      display:inline-flex;align-items:center;gap:6px;margin-top:14px;
-      padding:6px 12px;border-radius:999px;
-      background:rgba(16,185,129,.08);border:1px solid rgba(52,211,153,.25);
-      color:#6ee7b7;font-size:11px;font-family:"JetBrains Mono",monospace;
-      position:relative;z-index:1;
-    }
-    .arch-center .arch-pill::before{
-      content:"";width:6px;height:6px;border-radius:50%;background:#34d399;box-shadow:0 0 8px #34d399;
-    }
-    .arch-center .arch-local{
+    .arch-pill::before{content:"";width:6px;height:6px;border-radius:50%;background:#34d399;box-shadow:0 0 8px #34d399;animation:pulse 2s infinite}
+    .arch-local{
       margin-top:14px;font-size:12px;color:#6b7280;position:relative;z-index:1;
-    }
-    .arch-caps{
-      display:grid;grid-template-columns:1fr 1fr;gap:6px;width:100%;margin-top:18px;position:relative;z-index:1;
-    }
-    .arch-cap{
-      font-family:"JetBrains Mono",monospace;font-size:10.5px;color:#a78bfa;
-      padding:6px 8px;border-radius:7px;background:rgba(167,139,250,.06);border:1px solid rgba(167,139,250,.15);
-      text-align:center;
+      font-family:"JetBrains Mono",monospace;letter-spacing:.05em;
     }
 
     .arch-arrow{
-      align-self:center;display:flex;flex-direction:column;align-items:center;gap:8px;
-      color:#6b7280;
+      align-self:center;display:flex;flex-direction:column;gap:22px;
+      justify-content:center;padding:0 4px;
     }
-    .arch-arrow .arrow-label{
+    .arrow-row{display:flex;flex-direction:column;align-items:center;gap:6px;width:100%}
+    .arrow-row .arrow-label{
       font-family:"JetBrains Mono",monospace;font-size:9.5px;
-      text-transform:uppercase;letter-spacing:.18em;color:#6b7280;white-space:nowrap;
+      text-transform:uppercase;letter-spacing:.2em;white-space:nowrap;
     }
-    .arch-arrow .arrow-line{
-      width:72px;height:14px;position:relative;
+    .arrow-row.forward{color:#a78bfa}
+    .arrow-row.back{color:#6ee7b7}
+    .arrow-svg{width:100%;max-width:96px;height:12px;display:block}
+    .arrow-svg path{
+      stroke:currentColor;stroke-width:1.4;fill:none;
+      stroke-linecap:round;stroke-linejoin:round;
     }
-    .arch-arrow.right .arrow-label.out{color:#c4b5fd}
-    .arch-arrow .arrow-line svg{width:100%;height:100%;display:block}
-    .arch-arrow path{stroke-dasharray:3 4;animation:dash-flow 1.6s linear infinite}
-    .arch-arrow.right path{animation-direction:reverse}
+    .arrow-svg path.dashed{stroke-dasharray:3 4;animation:dash-flow 1.5s linear infinite}
+    .arrow-row.back .arrow-svg path.dashed{animation-direction:reverse}
     @keyframes dash-flow{to{stroke-dashoffset:-14}}
 
     /* demo video */
@@ -622,24 +614,63 @@
         <div class="arch-col">
           <div class="arch-label">AI agents</div>
           <div class="agent-list">
-            <div class="agent"><span class="agent-dot"></span>Claude Code</div>
-            <div class="agent"><span class="agent-dot"></span>Cursor</div>
-            <div class="agent"><span class="agent-dot"></span>Cline</div>
-            <div class="agent"><span class="agent-dot"></span>Codex</div>
-            <div class="agent"><span class="agent-dot"></span>Zed</div>
-            <div class="agent"><span class="agent-dot"></span>Any MCP client</div>
+            <div class="agent">
+              <span class="agent-mark"><img src="https://cdn.simpleicons.org/claude/a78bfa" alt="" loading="lazy"/></span>
+              <span>Claude Code</span>
+            </div>
+            <div class="agent">
+              <span class="agent-mark"><img src="https://cdn.simpleicons.org/cursor/a78bfa" alt="" loading="lazy"/></span>
+              <span>Cursor</span>
+            </div>
+            <div class="agent">
+              <span class="agent-mark" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="4" width="18" height="16" rx="2"/>
+                  <path d="M7 10 L10 13 L7 16 M13 16 H17"/>
+                </svg>
+              </span>
+              <span>Cline</span>
+            </div>
+            <div class="agent">
+              <span class="agent-mark" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 2 L21 7 V17 L12 22 L3 17 V7 Z"/>
+                  <path d="M9 10 L6 12 L9 14 M15 10 L18 12 L15 14"/>
+                </svg>
+              </span>
+              <span>Codex</span>
+            </div>
+            <div class="agent">
+              <span class="agent-mark"><img src="https://cdn.simpleicons.org/zedindustries/a78bfa" alt="" loading="lazy"/></span>
+              <span>Zed</span>
+            </div>
+            <div class="agent">
+              <span class="agent-mark" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="9"/>
+                  <path d="M8 12 H16 M12 8 V16"/>
+                </svg>
+              </span>
+              <span>Any MCP client</span>
+            </div>
           </div>
         </div>
 
-        <div class="arch-arrow left">
-          <div class="arrow-label">names only</div>
-          <div class="arrow-line">
-            <svg viewBox="0 0 72 14" fill="none">
-              <path d="M0 7 H62" stroke="#a78bfa" stroke-width="1.5" stroke-linecap="round"/>
-              <path d="M58 3 L64 7 L58 11" stroke="#a78bfa" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <div class="arch-arrow">
+          <div class="arrow-row forward">
+            <span class="arrow-label">names only</span>
+            <svg class="arrow-svg" viewBox="0 0 96 12" fill="none">
+              <path class="dashed" d="M2 6 H84"/>
+              <path d="M80 2 L88 6 L80 10"/>
             </svg>
           </div>
-          <div class="arrow-label" style="color:#6ee7b7">redacted ←</div>
+          <div class="arrow-row back">
+            <svg class="arrow-svg" viewBox="0 0 96 12" fill="none">
+              <path d="M16 2 L8 6 L16 10"/>
+              <path class="dashed" d="M12 6 H94"/>
+            </svg>
+            <span class="arrow-label">redacted</span>
+          </div>
         </div>
 
         <div class="arch-col arch-center">
@@ -651,41 +682,87 @@
             </svg>
           </div>
           <h3>AgenticVault</h3>
-          <div class="arch-meta">policy · inject · audit · rate-limit</div>
-          <div class="arch-caps">
-            <div class="arch-cap">AES-256-GCM</div>
-            <div class="arch-cap">OS keychain</div>
-            <div class="arch-cap">per-secret policy</div>
-            <div class="arch-cap">encrypted audit</div>
-          </div>
           <div class="arch-pill">local &amp; offline</div>
           <div class="arch-local">127.0.0.1 · on your machine</div>
         </div>
 
-        <div class="arch-arrow right">
-          <div class="arrow-label out">injected secrets</div>
-          <div class="arrow-line">
-            <svg viewBox="0 0 72 14" fill="none">
-              <path d="M0 7 H62" stroke="#c4b5fd" stroke-width="1.5" stroke-linecap="round"/>
-              <path d="M58 3 L64 7 L58 11" stroke="#c4b5fd" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <div class="arch-arrow">
+          <div class="arrow-row forward">
+            <span class="arrow-label">injected</span>
+            <svg class="arrow-svg" viewBox="0 0 96 12" fill="none">
+              <path class="dashed" d="M2 6 H84"/>
+              <path d="M80 2 L88 6 L80 10"/>
             </svg>
           </div>
-          <div class="arrow-label">HTTPS · scoped</div>
+          <div class="arrow-row back">
+            <svg class="arrow-svg" viewBox="0 0 96 12" fill="none">
+              <path d="M16 2 L8 6 L16 10"/>
+              <path class="dashed" d="M12 6 H94"/>
+            </svg>
+            <span class="arrow-label">HTTPS · scoped</span>
+          </div>
         </div>
 
         <div class="arch-col">
           <div class="arch-label">External APIs</div>
           <div class="api-grid">
-            <div class="api"><img src="https://cdn.simpleicons.org/cloudflare/a78bfa" alt="" loading="lazy"/><span>Cloudflare</span></div>
-            <div class="api"><img src="https://cdn.simpleicons.org/amazonwebservices/a78bfa" alt="" loading="lazy"/><span>AWS</span></div>
-            <div class="api"><img src="https://cdn.simpleicons.org/vercel/a78bfa" alt="" loading="lazy"/><span>Vercel</span></div>
-            <div class="api"><img src="https://cdn.simpleicons.org/supabase/a78bfa" alt="" loading="lazy"/><span>Supabase</span></div>
-            <div class="api"><img src="https://cdn.simpleicons.org/github/a78bfa" alt="" loading="lazy"/><span>GitHub</span></div>
-            <div class="api"><img src="https://cdn.simpleicons.org/linear/a78bfa" alt="" loading="lazy"/><span>Linear</span></div>
-            <div class="api"><img src="https://cdn.simpleicons.org/openai/a78bfa" alt="" loading="lazy"/><span>OpenAI</span></div>
-            <div class="api"><img src="https://cdn.simpleicons.org/anthropic/a78bfa" alt="" loading="lazy"/><span>Anthropic</span></div>
-            <div class="api"><img src="https://cdn.simpleicons.org/stripe/a78bfa" alt="" loading="lazy"/><span>Stripe</span></div>
-            <div class="api"><img src="https://cdn.simpleicons.org/slack/a78bfa" alt="" loading="lazy"/><span>Slack</span></div>
+            <div class="api">
+              <span class="api-mark"><img src="https://cdn.simpleicons.org/cloudflare/a78bfa" alt="" loading="lazy"/></span>
+              <span>Cloudflare</span>
+            </div>
+            <div class="api">
+              <span class="api-mark" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 3 L21 7.5 V16.5 L12 21 L3 16.5 V7.5 Z"/>
+                  <path d="M12 3 V12 M3 7.5 L12 12 L21 7.5"/>
+                </svg>
+              </span>
+              <span>AWS</span>
+            </div>
+            <div class="api">
+              <span class="api-mark"><img src="https://cdn.simpleicons.org/vercel/a78bfa" alt="" loading="lazy"/></span>
+              <span>Vercel</span>
+            </div>
+            <div class="api">
+              <span class="api-mark"><img src="https://cdn.simpleicons.org/supabase/a78bfa" alt="" loading="lazy"/></span>
+              <span>Supabase</span>
+            </div>
+            <div class="api">
+              <span class="api-mark"><img src="https://cdn.simpleicons.org/github/a78bfa" alt="" loading="lazy"/></span>
+              <span>GitHub</span>
+            </div>
+            <div class="api">
+              <span class="api-mark"><img src="https://cdn.simpleicons.org/linear/a78bfa" alt="" loading="lazy"/></span>
+              <span>Linear</span>
+            </div>
+            <div class="api">
+              <span class="api-mark" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 2 L21 7 V17 L12 22 L3 17 V7 Z"/>
+                  <circle cx="12" cy="12" r="3.2"/>
+                </svg>
+              </span>
+              <span>OpenAI</span>
+            </div>
+            <div class="api">
+              <span class="api-mark"><img src="https://cdn.simpleicons.org/anthropic/a78bfa" alt="" loading="lazy"/></span>
+              <span>Anthropic</span>
+            </div>
+            <div class="api">
+              <span class="api-mark"><img src="https://cdn.simpleicons.org/stripe/a78bfa" alt="" loading="lazy"/></span>
+              <span>Stripe</span>
+            </div>
+            <div class="api">
+              <span class="api-mark" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="7" y="2" width="4" height="10" rx="2"/>
+                  <rect x="12" y="7" width="10" height="4" rx="2"/>
+                  <rect x="13" y="12" width="4" height="10" rx="2"/>
+                  <rect x="2" y="13" width="10" height="4" rx="2"/>
+                </svg>
+              </span>
+              <span>Slack</span>
+            </div>
           </div>
         </div>
       </div>
