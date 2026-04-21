@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AgenticVault — the secret gateway for AI agents</title>
+  <meta name="description" content="Your agent asks. AgenticVault injects. It never sees the value. MCP-native secrets gateway with encrypted audit and policy enforcement." />
+  <meta property="og:title" content="AgenticVault — the secret gateway for AI agents" />
+  <meta property="og:description" content="Your agent asks. AgenticVault injects. It never sees the value." />
+  <meta name="theme-color" content="#07080d" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    html{scroll-behavior:smooth}
+    body{
+      font-family:Inter,system-ui,sans-serif;
+      background:#07080d;
+      color:#e5e7eb;
+      line-height:1.55;
+      -webkit-font-smoothing:antialiased;
+      overflow-x:hidden;
+      min-height:100vh;
+    }
+    body::before{
+      content:"";
+      position:fixed;inset:0;pointer-events:none;
+      background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='.5'/></svg>");
+      opacity:.04;mix-blend-mode:overlay;z-index:100;
+    }
+    .orb{position:fixed;border-radius:50%;filter:blur(90px);pointer-events:none;z-index:0;will-change:transform}
+    .orb.a{width:560px;height:560px;background:#4338ca;top:-220px;left:-180px;opacity:.38}
+    .orb.b{width:460px;height:460px;background:#7c3aed;bottom:-220px;right:-160px;opacity:.28}
+    .orb.c{width:320px;height:320px;background:#0ea5e9;top:40%;left:50%;opacity:.12}
+
+    .wrap{max-width:1180px;margin:0 auto;padding:0 28px;position:relative;z-index:1}
+
+    nav{display:flex;justify-content:space-between;align-items:center;padding:26px 0;gap:16px}
+    .brand{display:flex;align-items:center;gap:10px;font-weight:600;letter-spacing:-.01em;font-size:15px}
+    .brand-mark{
+      width:26px;height:26px;border-radius:7px;
+      background:conic-gradient(from 220deg,#6366f1,#a78bfa,#0ea5e9,#6366f1);
+      box-shadow:0 0 28px rgba(124,58,237,.55);
+      display:grid;place-items:center;
+    }
+    .brand-mark::after{
+      content:"";width:9px;height:9px;background:#07080d;border-radius:3px;
+      box-shadow:inset 0 0 4px rgba(167,139,250,.4);
+    }
+    nav .links{display:flex;align-items:center;gap:6px}
+    nav a{color:#9ca3af;text-decoration:none;font-size:14px;padding:8px 14px;border-radius:8px;transition:color .2s,background .2s}
+    nav a:hover{color:#e5e7eb;background:rgba(255,255,255,.03)}
+    .cta-ghost{
+      padding:8px 16px!important;border:1px solid #27272a;border-radius:999px!important;color:#e5e7eb!important;font-size:13px;
+      transition:all .2s;margin-left:6px;
+    }
+    .cta-ghost:hover{border-color:#6366f1;background:rgba(99,102,241,.07)!important}
+
+    .hero{
+      display:grid;grid-template-columns:1.15fr 1fr;gap:60px;align-items:center;
+      min-height:82vh;padding:40px 0 80px;
+    }
+    @media(max-width:860px){.hero{grid-template-columns:1fr;gap:20px;min-height:auto}}
+
+    .eyebrow{
+      display:inline-flex;align-items:center;gap:8px;
+      font-family:"JetBrains Mono",monospace;font-size:11px;color:#c4b5fd;
+      text-transform:uppercase;letter-spacing:.2em;
+      padding:6px 14px;border-radius:999px;
+      background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.18);
+      margin-bottom:28px;
+    }
+    .eyebrow::before{content:"";width:6px;height:6px;border-radius:50%;background:#a78bfa;box-shadow:0 0 12px #a78bfa;animation:pulse 2s infinite}
+    @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.85)}}
+
+    h1{
+      font-size:clamp(40px,6.2vw,76px);font-weight:700;line-height:1;letter-spacing:-.03em;
+      margin-bottom:28px;
+    }
+    h1 .grad{
+      background:linear-gradient(135deg,#e5e7eb 0%,#a78bfa 45%,#6366f1 100%);
+      -webkit-background-clip:text;background-clip:text;color:transparent;
+    }
+    h1 .thin{color:#6b7280;font-weight:400}
+    .hero-sub{font-size:18px;color:#9ca3af;max-width:540px;margin-bottom:36px}
+
+    .cta-row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+    .cta-primary{
+      background:linear-gradient(135deg,#6366f1,#7c3aed);
+      color:#fff;padding:14px 24px;border-radius:10px;font-weight:500;
+      text-decoration:none;font-size:14px;
+      box-shadow:0 12px 34px -10px rgba(99,102,241,.55),inset 0 1px 0 rgba(255,255,255,.1);
+      transition:transform .15s,box-shadow .2s;
+      display:inline-flex;align-items:center;gap:10px;
+    }
+    .cta-primary:hover{transform:translateY(-1px);box-shadow:0 16px 40px -10px rgba(99,102,241,.7),inset 0 1px 0 rgba(255,255,255,.15)}
+    .cta-secondary{
+      color:#e5e7eb;padding:14px 20px;border-radius:10px;font-size:14px;
+      text-decoration:none;border:1px solid #27272a;transition:all .2s;
+      display:inline-flex;align-items:center;gap:8px;
+    }
+    .cta-secondary:hover{border-color:#4f46e5;background:rgba(99,102,241,.06)}
+    .cta-row .meta{color:#6b7280;font-size:13px;font-family:"JetBrains Mono",monospace}
+
+    .hero-3d{position:relative;aspect-ratio:1;width:100%;max-width:520px;margin-left:auto}
+    #canvas3d{width:100%;height:100%;display:block}
+    .hero-3d::after{
+      content:"";position:absolute;inset:0;pointer-events:none;
+      background:radial-gradient(circle at center,transparent 38%,#07080d 82%);
+    }
+    .hero-3d::before{
+      content:"";position:absolute;inset:10%;border-radius:50%;
+      background:radial-gradient(circle,rgba(124,58,237,.25),transparent 60%);
+      filter:blur(30px);
+    }
+
+    .strip{
+      display:flex;gap:32px;align-items:center;padding:26px 0;
+      border-top:1px solid #17181f;border-bottom:1px solid #17181f;
+      font-family:"JetBrains Mono",monospace;font-size:12px;color:#6b7280;
+      overflow-x:auto;scrollbar-width:none;
+    }
+    .strip::-webkit-scrollbar{display:none}
+    .strip span{white-space:nowrap}
+    .strip .dot{width:4px;height:4px;background:#3f3f46;border-radius:50%;flex-shrink:0}
+
+    section{padding:120px 0;position:relative}
+    .section-head{max-width:680px;margin:0 auto 72px;text-align:center}
+    .section-tag{
+      font-family:"JetBrains Mono",monospace;font-size:11px;
+      color:#a78bfa;text-transform:uppercase;letter-spacing:.2em;margin-bottom:18px;
+    }
+    h2{font-size:clamp(32px,4.2vw,50px);font-weight:600;line-height:1.1;letter-spacing:-.02em;margin-bottom:18px}
+    .section-head p{color:#9ca3af;font-size:17px}
+
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+    .card{
+      background:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,0));
+      border:1px solid #17181f;border-radius:16px;padding:30px;
+      transition:transform .35s cubic-bezier(.2,.8,.2,1),border-color .3s,box-shadow .3s;
+      transform-style:preserve-3d;
+      will-change:transform;position:relative;overflow:hidden;
+    }
+    .card::before{
+      content:"";position:absolute;inset:0;border-radius:16px;opacity:0;transition:opacity .3s;
+      background:radial-gradient(600px circle at var(--mx,50%) var(--my,50%),rgba(99,102,241,.08),transparent 40%);
+      pointer-events:none;
+    }
+    .card:hover{border-color:#3730a3;box-shadow:0 20px 60px -20px rgba(99,102,241,.25)}
+    .card:hover::before{opacity:1}
+    .card-icon{
+      width:42px;height:42px;border-radius:10px;
+      background:linear-gradient(135deg,rgba(99,102,241,.18),rgba(124,58,237,.1));
+      border:1px solid rgba(99,102,241,.22);
+      display:grid;place-items:center;margin-bottom:22px;
+      font-family:"JetBrains Mono",monospace;color:#c4b5fd;font-size:13px;font-weight:500;
+    }
+    .card h3{font-size:17px;font-weight:600;margin-bottom:10px;letter-spacing:-.01em}
+    .card p{color:#9ca3af;font-size:14px;line-height:1.6}
+    .card code{font-family:"JetBrains Mono",monospace;font-size:12.5px;color:#a78bfa;background:rgba(167,139,250,.08);padding:1px 6px;border-radius:4px}
+
+    .flow{
+      display:grid;grid-template-columns:repeat(3,1fr);gap:18px;
+      max-width:960px;margin:0 auto;position:relative;
+    }
+    @media(max-width:760px){.flow{grid-template-columns:1fr}}
+    .flow-node{
+      position:relative;padding:30px;border-radius:16px;
+      background:#0c0d14;border:1px solid #17181f;
+    }
+    .flow-num{
+      font-family:"JetBrains Mono",monospace;font-size:11px;color:#6366f1;
+      margin-bottom:14px;letter-spacing:.15em;font-weight:500;
+    }
+    .flow-node h4{font-size:17px;margin-bottom:10px;letter-spacing:-.01em}
+    .flow-node p{font-size:14px;color:#9ca3af;line-height:1.6}
+    .flow-node:nth-child(2){
+      border-color:rgba(99,102,241,.3);
+      box-shadow:0 0 50px -10px rgba(99,102,241,.35);
+      background:linear-gradient(180deg,#0e0f18,#0c0d14);
+    }
+    .flow-node code{font-family:"JetBrains Mono",monospace;color:#a78bfa;font-size:12.5px}
+
+    .cta-block{
+      text-align:center;padding:96px 40px;
+      background:
+        radial-gradient(circle at 20% 30%,rgba(99,102,241,.18),transparent 55%),
+        radial-gradient(circle at 80% 70%,rgba(124,58,237,.14),transparent 55%),
+        #0a0b11;
+      border:1px solid #17181f;border-radius:28px;
+      position:relative;overflow:hidden;
+    }
+    .cta-block::before{
+      content:"";position:absolute;inset:0;
+      background:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40'><path d='M0 20h40M20 0v40' stroke='%23ffffff' stroke-opacity='.02' stroke-width='1'/></svg>");
+      pointer-events:none;
+    }
+    .cta-block h2{margin-bottom:14px;position:relative}
+    .cta-block p{color:#9ca3af;margin-bottom:30px;max-width:540px;margin-left:auto;margin-right:auto;position:relative}
+    .cta-block .cta-primary{position:relative}
+
+    footer{padding:48px 0;text-align:center;color:#52525b;font-size:13px;border-top:1px solid #17181f;margin-top:40px}
+    footer code{font-family:"JetBrains Mono",monospace;color:#71717a}
+    footer a{color:#71717a;text-decoration:none}
+    footer a:hover{color:#a78bfa}
+
+    @media(prefers-reduced-motion:reduce){
+      *{animation:none!important;transition:none!important}
+      .card{transform:none!important}
+    }
+  </style>
+</head>
+<body>
+  <div class="orb a"></div>
+  <div class="orb b"></div>
+  <div class="orb c"></div>
+
+  <div class="wrap">
+    <nav>
+      <div class="brand">
+        <span class="brand-mark"></span>
+        <span>AgenticVault</span>
+      </div>
+      <div class="links">
+        <a href="#features">Features</a>
+        <a href="#how">How it works</a>
+        <a class="cta-ghost" href="mailto:ali@madhoob.dev?subject=AgenticVault%20access">Request access</a>
+      </div>
+    </nav>
+
+    <section class="hero">
+      <div>
+        <div class="eyebrow">MCP-native · Local-first · Audited</div>
+        <h1>Your agent asks.<br><span class="grad">AgenticVault injects.</span><br><span class="thin">It never sees the value.</span></h1>
+        <p class="hero-sub">The secrets gateway built for AI coding agents. Policy-enforced injection into HTTP calls and subprocesses, encrypted audit trail, zero plaintext exposure to the model — ever.</p>
+        <div class="cta-row">
+          <a class="cta-primary" href="mailto:ali@madhoob.dev?subject=AgenticVault">Request early access <span style="font-size:16px">→</span></a>
+          <a class="cta-secondary" href="#how">See how it works</a>
+        </div>
+      </div>
+      <div class="hero-3d">
+        <canvas id="canvas3d" aria-hidden="true"></canvas>
+      </div>
+    </section>
+
+    <div class="strip" aria-label="Technical highlights">
+      <span>AES-256-GCM + Argon2id</span><span class="dot"></span>
+      <span>MCP over stdio</span><span class="dot"></span>
+      <span>OS keychain bound</span><span class="dot"></span>
+      <span>Policy-enforced</span><span class="dot"></span>
+      <span>314 tests · TypeScript strict</span><span class="dot"></span>
+      <span>Encrypted audit at rest</span>
+    </div>
+
+    <section id="features">
+      <div class="section-head">
+        <div class="section-tag">What's inside</div>
+        <h2>Built for the post-agent reality.</h2>
+        <p>13 features shipped. Every line guarded by 314 tests. Every secret path audited end-to-end.</p>
+      </div>
+      <div class="grid">
+        <div class="card" data-tilt>
+          <div class="card-icon">01</div>
+          <h3>Zero-plaintext injection</h3>
+          <p>Agents call <code>http_request</code>, <code>run_command</code>, or <code>list_secrets</code> — and only ever see names and redaction markers, never values.</p>
+        </div>
+        <div class="card" data-tilt>
+          <div class="card-icon">02</div>
+          <h3>Encrypted vault</h3>
+          <p>AES-256-GCM with Argon2id KDF. Master key held in OS keychain (macOS, libsecret, Windows) with headless fallback.</p>
+        </div>
+        <div class="card" data-tilt>
+          <div class="card-icon">03</div>
+          <h3>Policy engine</h3>
+          <p>Host allowlist, command+args regex allowlist, forbidden-env-var list, per-secret token-bucket rate limiter.</p>
+        </div>
+        <div class="card" data-tilt>
+          <div class="card-icon">04</div>
+          <h3>Encrypted audit trail</h3>
+          <p>Every request / response body encrypted at rest. Defense-in-depth scrub at persist <em>and</em> at render. Crash-safe pruning.</p>
+        </div>
+        <div class="card" data-tilt>
+          <div class="card-icon">05</div>
+          <h3>Forensic detail view</h3>
+          <p>CLI and local UI show full req/res, injected secrets, policy decision, timing, rate-limit state — per entry.</p>
+        </div>
+        <div class="card" data-tilt>
+          <div class="card-icon">06</div>
+          <h3>Scoped vaults</h3>
+          <p>Global + per-project override, gitignore-aware discovery. One binary, zero cloud, no telemetry.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="how">
+      <div class="section-head">
+        <div class="section-tag">The flow</div>
+        <h2>Three steps. No model gets near a raw value.</h2>
+      </div>
+      <div class="flow">
+        <div class="flow-node">
+          <div class="flow-num">01 · AGENT</div>
+          <h4>Requests an action</h4>
+          <p>Claude, Cursor, Cline — any MCP client calls <code>http_request</code> with a secret <em>name</em>.</p>
+        </div>
+        <div class="flow-node">
+          <div class="flow-num">02 · VAULT</div>
+          <h4>Enforces + injects</h4>
+          <p>Policy check, rate-limit, unlock via keychain, token written into the outbound call.</p>
+        </div>
+        <div class="flow-node">
+          <div class="flow-num">03 · AUDIT</div>
+          <h4>Captures + scrubs</h4>
+          <p>Encrypted body store, scrub-at-persist and scrub-at-render, forensic detail view.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="cta-block">
+        <h2>Make it yours.</h2>
+        <p>Code + IP sale. Full source, 314 tests, conventional commit history, architecture docs, and the insight: agents shouldn't see raw secrets — and now they don't have to.</p>
+        <a class="cta-primary" href="mailto:ali@madhoob.dev?subject=AgenticVault%20-%20acquisition">Open a conversation <span style="font-size:16px">→</span></a>
+      </div>
+    </section>
+
+    <footer>
+      <p>© 2026 · <code>AgenticVault</code> · Built in TypeScript, shipped with care.</p>
+    </footer>
+  </div>
+
+  <script src="https://unpkg.com/three@0.160.0/build/three.min.js" defer></script>
+  <script defer>
+    addEventListener('load', () => {
+      if (typeof THREE === 'undefined') return;
+
+      const canvas = document.getElementById('canvas3d');
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+      camera.position.z = 3.2;
+
+      function resize() {
+        const r = canvas.getBoundingClientRect();
+        if (r.width === 0) return;
+        renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+        renderer.setSize(r.width, r.height, false);
+        camera.aspect = r.width / r.height;
+        camera.updateProjectionMatrix();
+      }
+      resize();
+      addEventListener('resize', resize);
+
+      const geo = new THREE.IcosahedronGeometry(1, 1);
+      const edges = new THREE.EdgesGeometry(geo);
+      const lineMat = new THREE.LineBasicMaterial({ color: 0xa78bfa, transparent: true, opacity: 0.92 });
+      const mesh = new THREE.LineSegments(edges, lineMat);
+      scene.add(mesh);
+
+      const innerMat = new THREE.MeshBasicMaterial({ color: 0x1e1b4b, transparent: true, opacity: 0.28 });
+      const innerMesh = new THREE.Mesh(geo, innerMat);
+      scene.add(innerMesh);
+
+      const pointsMat = new THREE.PointsMaterial({ color: 0xc4b5fd, size: 0.07, transparent: true, opacity: 0.95 });
+      const points = new THREE.Points(geo, pointsMat);
+      scene.add(points);
+
+      const outerGeo = new THREE.IcosahedronGeometry(1.65, 0);
+      const outerEdges = new THREE.EdgesGeometry(outerGeo);
+      const outerMat = new THREE.LineBasicMaterial({ color: 0x6366f1, transparent: true, opacity: 0.2 });
+      const outer = new THREE.LineSegments(outerEdges, outerMat);
+      scene.add(outer);
+
+      const coreGeo = new THREE.IcosahedronGeometry(0.42, 0);
+      const coreMat = new THREE.MeshBasicMaterial({ color: 0xa78bfa, transparent: true, opacity: 0.55 });
+      const core = new THREE.Mesh(coreGeo, coreMat);
+      scene.add(core);
+
+      let mx = 0, my = 0, tx = 0, ty = 0;
+      addEventListener('mousemove', (e) => {
+        mx = ((e.clientX / innerWidth) - 0.5) * 0.6;
+        my = ((e.clientY / innerHeight) - 0.5) * 0.4;
+      });
+
+      let t = 0, running = true;
+      document.addEventListener('visibilitychange', () => { running = !document.hidden; if (running) tick(); });
+      function tick() {
+        if (!running) return;
+        t += 0.005;
+        tx += (mx - tx) * 0.05;
+        ty += (my - ty) * 0.05;
+        mesh.rotation.y = t + tx;
+        mesh.rotation.x = t * 0.6 + ty;
+        outer.rotation.y = -t * 0.5 - tx * 0.4;
+        outer.rotation.x = -t * 0.3;
+        innerMesh.rotation.copy(mesh.rotation);
+        points.rotation.copy(mesh.rotation);
+        core.rotation.y = -t * 1.2;
+        core.rotation.x = -t * 0.9;
+        core.scale.setScalar(1 + Math.sin(t * 2) * 0.06);
+        renderer.render(scene, camera);
+        requestAnimationFrame(tick);
+      }
+      tick();
+
+      const cards = document.querySelectorAll('[data-tilt]');
+      cards.forEach(el => {
+        el.addEventListener('mousemove', (e) => {
+          const r = el.getBoundingClientRect();
+          const px = (e.clientX - r.left) / r.width - 0.5;
+          const py = (e.clientY - r.top) / r.height - 0.5;
+          el.style.transform = `perspective(900px) rotateX(${-py * 5}deg) rotateY(${px * 7}deg) translateZ(0)`;
+          el.style.setProperty('--mx', `${(e.clientX - r.left)}px`);
+          el.style.setProperty('--my', `${(e.clientY - r.top)}px`);
+        });
+        el.addEventListener('mouseleave', () => { el.style.transform = ''; });
+      });
+    });
+  </script>
+</body>
+</html>
