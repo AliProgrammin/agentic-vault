@@ -176,11 +176,18 @@
     .verdict strong{color:#fda4af}
     .verdict .arrow{color:#a78bfa;font-family:"JetBrains Mono",monospace;margin:0 10px}
 
-    /* before / after terminals */
+    /* before / after terminals — stacked so the reader focuses on one at a time */
     .split{
-      display:grid;grid-template-columns:1fr 1fr;gap:20px;max-width:1060px;margin:0 auto;
+      display:flex;flex-direction:column;gap:24px;max-width:780px;margin:0 auto;
     }
-    @media(max-width:900px){.split{grid-template-columns:1fr}}
+    .split-divider{
+      display:flex;align-items:center;justify-content:center;gap:14px;
+      color:#6b7280;font-family:"JetBrains Mono",monospace;font-size:11px;
+      text-transform:uppercase;letter-spacing:.25em;
+    }
+    .split-divider::before,.split-divider::after{
+      content:"";height:1px;flex:1;background:linear-gradient(90deg,transparent,#1a1b23,transparent);
+    }
     .term{
       background:#0a0b11;border:1px solid #1a1b23;border-radius:14px;
       overflow:hidden;font-family:"JetBrains Mono",monospace;font-size:12.5px;
@@ -303,7 +310,7 @@
     .flow-node code{font-family:"JetBrains Mono",monospace;color:#a78bfa;font-size:12.5px}
 
     .cta-block{
-      text-align:center;padding:96px 40px;
+      text-align:center;padding:80px 40px;
       background:
         radial-gradient(circle at 20% 30%,rgba(99,102,241,.18),transparent 55%),
         radial-gradient(circle at 80% 70%,rgba(124,58,237,.14),transparent 55%),
@@ -316,9 +323,32 @@
       background:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40'><path d='M0 20h40M20 0v40' stroke='%23ffffff' stroke-opacity='.02' stroke-width='1'/></svg>");
       pointer-events:none;
     }
+    .cta-block .section-tag{position:relative}
     .cta-block h2{margin-bottom:14px;position:relative}
-    .cta-block p{color:#9ca3af;margin-bottom:30px;max-width:540px;margin-left:auto;margin-right:auto;position:relative}
+    .cta-block > p{color:#9ca3af;margin-bottom:36px;max-width:600px;margin-left:auto;margin-right:auto;position:relative;font-size:17px}
     .cta-block .cta-primary{position:relative}
+    .use-grid{
+      display:grid;grid-template-columns:repeat(3,1fr);gap:14px;
+      max-width:820px;margin:0 auto 36px;position:relative;text-align:left;
+    }
+    @media(max-width:760px){.use-grid{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:460px){.use-grid{grid-template-columns:1fr}}
+    .use-item{
+      display:flex;align-items:flex-start;gap:10px;
+      padding:12px 14px;border-radius:10px;
+      background:rgba(255,255,255,.02);border:1px solid #17181f;
+      font-size:13.5px;color:#cbd5e1;
+    }
+    .use-item .check{
+      flex-shrink:0;width:18px;height:18px;border-radius:50%;
+      background:rgba(167,139,250,.15);border:1px solid rgba(167,139,250,.3);
+      display:grid;place-items:center;color:#c4b5fd;font-size:11px;font-weight:600;
+      margin-top:1px;
+    }
+    .use-item span{line-height:1.45}
+    .cta-foot{
+      margin-top:18px;font-size:13px;color:#6b7280;font-family:"JetBrains Mono",monospace;position:relative;
+    }
 
     footer{padding:48px 0;text-align:center;color:#52525b;font-size:13px;border-top:1px solid #17181f;margin-top:40px}
     footer code{font-family:"JetBrains Mono",monospace;color:#71717a}
@@ -503,6 +533,8 @@
           </div>
         </div>
 
+        <div class="split-divider"><span>Now with AgenticVault</span></div>
+
         <div class="term-wrap good">
           <span class="term-label">With AgenticVault</span>
           <div class="term good">
@@ -523,6 +555,12 @@
         </div>
       </div>
 
+      <div class="video-head">
+        <div class="section-tag" style="margin-top:96px">Recorded demo</div>
+        <h3 style="font-size:clamp(24px,3vw,32px);font-weight:600;line-height:1.15;letter-spacing:-.02em;margin-bottom:14px;text-align:center;max-width:760px;margin-left:auto;margin-right:auto">See AgenticVault running live — with Codex as the agent.</h3>
+        <p style="color:#9ca3af;font-size:16px;text-align:center;max-width:680px;margin:0 auto 0">Codex asks for a Cloudflare API token, AgenticVault mediates the request, the secret never enters Codex's context, and every call lands in the encrypted audit log you can replay on the CLI or the local UI.</p>
+      </div>
+
       <div class="demo-video-wrap">
         <video class="demo-video" controls preload="metadata" playsinline>
           <source src="/demo.mp4" type="video/mp4"/>
@@ -533,9 +571,22 @@
 
     <section>
       <div class="cta-block">
-        <h2>Make it yours.</h2>
-        <p>Code + IP sale. Full source, 314 tests, conventional commit history, architecture docs, and the insight: agents shouldn't see raw secrets — and now they don't have to.</p>
-        <a class="cta-primary" href="mailto:haaamcar@gmail.com?subject=AgenticVault%20-%20acquisition">Open a conversation <span style="font-size:16px">→</span></a>
+        <div class="section-tag">Use it</div>
+        <h2>Plug it into your agent in under a minute.</h2>
+        <p>One binary. One command. Your agents get secrets through a policy-enforced gateway from day one — no cloud, no accounts, no telemetry.</p>
+        <div class="use-grid">
+          <div class="use-item"><span class="check">✓</span><span>One-command install — no Docker, no cloud setup</span></div>
+          <div class="use-item"><span class="check">✓</span><span>Works with Claude Code, Cursor, Cline, Codex, Zed — any MCP client</span></div>
+          <div class="use-item"><span class="check">✓</span><span>OS keychain bound (macOS, libsecret, Windows)</span></div>
+          <div class="use-item"><span class="check">✓</span><span>Encrypted vault + audit out of the box, AES-256-GCM</span></div>
+          <div class="use-item"><span class="check">✓</span><span>Scoped vaults — global defaults + per-project overrides</span></div>
+          <div class="use-item"><span class="check">✓</span><span>Local forensic UI on <code>127.0.0.1</code>, no exposure</span></div>
+          <div class="use-item"><span class="check">✓</span><span>Per-secret policy engine + token-bucket rate limits</span></div>
+          <div class="use-item"><span class="check">✓</span><span>Forbidden env-var guardrails (<code>PATH</code>, <code>LD_PRELOAD</code>, …)</span></div>
+          <div class="use-item"><span class="check">✓</span><span>Zero telemetry, zero outbound calls — local-only by design</span></div>
+        </div>
+        <a class="cta-primary" href="mailto:haaamcar@gmail.com?subject=AgenticVault%20access">Request access <span style="font-size:16px">→</span></a>
+        <div class="cta-foot">npm · macOS · Linux · Windows · Node 20+</div>
       </div>
     </section>
 
