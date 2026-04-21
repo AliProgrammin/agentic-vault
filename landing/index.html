@@ -176,6 +176,84 @@
     .verdict strong{color:#fda4af}
     .verdict .arrow{color:#a78bfa;font-family:"JetBrains Mono",monospace;margin:0 10px}
 
+    /* before / after terminals */
+    .split{
+      display:grid;grid-template-columns:1fr 1fr;gap:20px;max-width:1060px;margin:0 auto;
+    }
+    @media(max-width:900px){.split{grid-template-columns:1fr}}
+    .term{
+      background:#0a0b11;border:1px solid #1a1b23;border-radius:14px;
+      overflow:hidden;font-family:"JetBrains Mono",monospace;font-size:12.5px;
+      display:flex;flex-direction:column;min-height:340px;
+      transition:border-color .3s,box-shadow .3s;
+    }
+    .term.bad{border-color:rgba(244,63,94,.22)}
+    .term.bad:hover{border-color:rgba(244,63,94,.45);box-shadow:0 20px 60px -20px rgba(244,63,94,.25)}
+    .term.good{border-color:rgba(99,102,241,.22)}
+    .term.good:hover{border-color:rgba(99,102,241,.45);box-shadow:0 20px 60px -20px rgba(99,102,241,.25)}
+    .term-head{
+      padding:10px 14px;border-bottom:1px solid #17181f;
+      display:flex;align-items:center;gap:10px;
+      font-size:11.5px;color:#9ca3af;letter-spacing:.05em;
+      background:linear-gradient(180deg,#0d0e15,#0a0b11);
+    }
+    .term-dots{display:flex;gap:5px}
+    .term-dots i{width:9px;height:9px;border-radius:50%;display:block}
+    .term-dots i:nth-child(1){background:#f43f5e}
+    .term-dots i:nth-child(2){background:#fbbf24}
+    .term-dots i:nth-child(3){background:#34d399}
+    .term-title{margin-left:auto;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:.12em}
+    .term-label{
+      position:absolute;top:-11px;left:16px;padding:3px 10px;border-radius:999px;
+      font-size:10.5px;text-transform:uppercase;letter-spacing:.15em;font-weight:500;
+    }
+    .term-wrap{position:relative}
+    .term-wrap .bad + .term-label,
+    .term-wrap.bad .term-label{background:#2a0a12;color:#fda4af;border:1px solid rgba(244,63,94,.3)}
+    .term-wrap.good .term-label{background:#10102a;color:#c4b5fd;border:1px solid rgba(167,139,250,.3)}
+    .term-body{padding:16px 16px 18px;flex:1;line-height:1.75;color:#cbd5e1}
+    .term-line{opacity:0;animation:line-in 14s infinite}
+    .term-line .prompt{color:#6b7280;margin-right:8px}
+    .term-line .user{color:#a78bfa}
+    .term-line .agent{color:#93c5fd}
+    .term-line .note{color:#6b7280;font-style:italic}
+    .term-line .leak{color:#fda4af;background:rgba(244,63,94,.12);padding:1px 5px;border-radius:3px}
+    .term-line .safe{color:#c4b5fd;background:rgba(167,139,250,.14);padding:1px 5px;border-radius:3px}
+    .term-line .warn{color:#fb7185;font-weight:500}
+    .term-line .ok{color:#86efac;font-weight:500}
+    .term-line .dim{color:#6b7280}
+    .term-line .key{color:#fda4af}
+    @keyframes line-in{
+      0%,2% {opacity:0;transform:translateY(4px)}
+      6%,92% {opacity:1;transform:translateY(0)}
+      96%,100% {opacity:0;transform:translateY(-4px)}
+    }
+    .term-line:nth-child(1){animation-delay:.2s}
+    .term-line:nth-child(2){animation-delay:1.4s}
+    .term-line:nth-child(3){animation-delay:2.8s}
+    .term-line:nth-child(4){animation-delay:4.2s}
+    .term-line:nth-child(5){animation-delay:5.6s}
+    .term-line:nth-child(6){animation-delay:7.0s}
+    .term-line:nth-child(7){animation-delay:8.4s}
+    .term-caret::after{
+      content:"▍";color:#a78bfa;animation:blink 1s steps(2) infinite;margin-left:2px;
+    }
+    @keyframes blink{50%{opacity:0}}
+
+    /* demo video */
+    .demo-video-wrap{
+      max-width:960px;margin:48px auto 0;position:relative;border-radius:18px;overflow:hidden;
+      border:1px solid #1a1b23;background:#0a0b11;
+      box-shadow:0 30px 80px -20px rgba(0,0,0,.5),0 0 80px -40px rgba(124,58,237,.3);
+    }
+    .demo-video-wrap::before{
+      content:"";position:absolute;inset:0;padding:1px;border-radius:18px;pointer-events:none;
+      background:linear-gradient(135deg,rgba(99,102,241,.25),transparent 40%,rgba(124,58,237,.25));
+      -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+      -webkit-mask-composite:xor;mask-composite:exclude;z-index:1;
+    }
+    .demo-video{display:block;width:100%;height:auto;background:#000}
+
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
     .card{
       background:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,0));
@@ -276,6 +354,7 @@
         <a href="#problem">Problem</a>
         <a href="#features">Features</a>
         <a href="#how">How it works</a>
+        <a href="#demo">Demo</a>
         <a class="cta-ghost" href="mailto:haaamcar@gmail.com?subject=AgenticVault%20access">Request access</a>
       </div>
     </nav>
@@ -394,6 +473,61 @@
           <h4>Captures + scrubs</h4>
           <p>Encrypted body store, scrub-at-persist and scrub-at-render, forensic detail view.</p>
         </div>
+      </div>
+    </section>
+
+    <section id="demo">
+      <div class="section-head">
+        <div class="section-tag">See it in action</div>
+        <h2>Same agent. Same task.<br/>One leaks. One doesn't.</h2>
+        <p>Both terminals run the exact same prompt: <em>"fetch my Cloudflare zones."</em> Watch what ends up in the agent's context.</p>
+      </div>
+
+      <div class="split">
+        <div class="term-wrap bad">
+          <span class="term-label">Without AgenticVault</span>
+          <div class="term bad">
+            <div class="term-head">
+              <div class="term-dots"><i></i><i></i><i></i></div>
+              <span class="term-title">agent.log · leaked</span>
+            </div>
+            <div class="term-body">
+              <div class="term-line"><span class="prompt">&gt;</span><span class="user">user:</span> fetch my cloudflare zones</div>
+              <div class="term-line"><span class="prompt">&gt;</span><span class="agent">agent:</span> reading <span class="dim">./.env</span> …</div>
+              <div class="term-line"><span class="prompt">&gt;</span><span class="agent">agent:</span> <span class="leak">CLOUDFLARE_API_TOKEN=cf_live_7fJkQp9Ar3xNv2</span></div>
+              <div class="term-line"><span class="prompt">&gt;</span><span class="agent">agent:</span> curl -H "Authorization: Bearer <span class="key">cf_live_7fJkQp9Ar3xNv2</span>"</div>
+              <div class="term-line"><span class="prompt">&gt;</span><span class="note">&mdash; token now in model context, logs, training pipeline &mdash;</span></div>
+              <div class="term-line"><span class="prompt">!</span> <span class="warn">SECRET LEAKED</span> <span class="dim">· visible in agent memory forever</span></div>
+              <div class="term-line"><span class="prompt">!</span> <span class="warn">NO AUDIT</span> <span class="dim">· no record, no forensics</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="term-wrap good">
+          <span class="term-label">With AgenticVault</span>
+          <div class="term good">
+            <div class="term-head">
+              <div class="term-dots"><i></i><i></i><i></i></div>
+              <span class="term-title">agent.log · mediated</span>
+            </div>
+            <div class="term-body">
+              <div class="term-line"><span class="prompt">&gt;</span><span class="user">user:</span> fetch my cloudflare zones</div>
+              <div class="term-line"><span class="prompt">&gt;</span><span class="agent">agent:</span> mcp_http_request(url, <span class="safe">CLOUDFLARE_API_TOKEN</span>)</div>
+              <div class="term-line"><span class="prompt">&gt;</span><span class="dim">[vault]</span> policy ✓ · rate-limit ✓ · inject <span class="safe">Bearer [REDACTED:CLOUDFLARE_API_TOKEN]</span></div>
+              <div class="term-line"><span class="prompt">&gt;</span><span class="dim">[audit]</span> req_8a3f allowed · 142ms · body encrypted</div>
+              <div class="term-line"><span class="prompt">&gt;</span><span class="agent">agent:</span> got 12 zones. <span class="dim">value never entered context.</span></div>
+              <div class="term-line"><span class="prompt">✓</span> <span class="ok">ZERO PLAINTEXT</span> <span class="dim">· in logs · in memory · at rest</span></div>
+              <div class="term-line"><span class="prompt">✓</span> <span class="ok">FULL AUDIT</span> <span class="dim">· replay via `audit show req_8a3f`</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="demo-video-wrap">
+        <video class="demo-video" controls preload="metadata" playsinline>
+          <source src="/demo.mp4" type="video/mp4"/>
+          Your browser does not support the video tag. <a href="/demo.mp4">Download the demo</a>.
+        </video>
       </div>
     </section>
 
