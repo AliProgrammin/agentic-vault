@@ -16,6 +16,7 @@ import { cmdPolicySet, cmdPolicyShow } from "./commands/policy.js";
 import { cmdRemove } from "./commands/remove.js";
 import { cmdRotate } from "./commands/rotate.js";
 import { cmdRun } from "./commands/run.js";
+import { cmdTui } from "./commands/tui.js";
 import { cmdUi } from "./commands/ui.js";
 import {
   CliError,
@@ -261,6 +262,13 @@ export function buildProgram(deps: CliDeps): Command {
     .description("Start the SecretProxy MCP server over stdio.")
     .action(async () => {
       await cmdRun(deps);
+    });
+
+  program
+    .command("tui")
+    .description("Start the interactive SecretProxy terminal UI.")
+    .action(async () => {
+      await cmdTui(deps);
     });
 
   program

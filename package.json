@@ -3,7 +3,8 @@
   "version": "0.0.1",
   "description": "Open-source MCP server that lets AI agents call APIs without ever seeing the credentials.",
   "bin": {
-    "secretproxy": "./dist/cli.cjs"
+    "secretproxy": "./dist/cli.cjs",
+    "secretproxy-tui": "./dist/tui.cjs"
   },
   "main": "./dist/index.cjs",
   "types": "./dist/index.d.ts",
@@ -26,14 +27,22 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",
     "@napi-rs/keyring": "^1.1.6",
+    "@types/react": "^19.2.14",
     "argon2": "^0.41.1",
+    "clipboardy": "^5.3.1",
     "commander": "^12.1.0",
+    "ink": "^7.0.1",
+    "ink-testing-library": "^4.0.0",
+    "ink-text-input": "^6.0.0",
     "proper-lockfile": "^4.1.2",
+    "react": "^19.2.5",
+    "react-test-renderer": "^19.2.5",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "@types/proper-lockfile": "^4.1.4",
+    "@types/react-test-renderer": "^19.1.0",
     "@typescript-eslint/eslint-plugin": "^8.18.1",
     "@typescript-eslint/parser": "^8.18.1",
     "eslint": "^9.17.0",

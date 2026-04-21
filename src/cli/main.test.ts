@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { makeTestDeps, makeTmpDir } from "./test-helpers.js";
-import { runCli } from "./main.js";
+import { buildProgram, runCli } from "./main.js";
 
 describe("runCli", () => {
   let tmp: string;
@@ -22,5 +22,11 @@ describe("runCli", () => {
     const harness = makeTestDeps({ cwd: tmp, homedir: tmp, env: {} });
     const code = await runCli(["--version"], harness.deps);
     expect(code).toBe(0);
+  });
+
+  it("registers the tui subcommand", () => {
+    const harness = makeTestDeps({ cwd: tmp, homedir: tmp, env: {} });
+    const commandNames = buildProgram(harness.deps).commands.map((command) => command.name());
+    expect(commandNames).toContain("tui");
   });
 });
