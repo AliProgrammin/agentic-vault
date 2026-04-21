@@ -134,6 +134,44 @@
     h2{font-size:clamp(32px,4.2vw,50px);font-weight:600;line-height:1.1;letter-spacing:-.02em;margin-bottom:18px}
     .section-head p{color:#9ca3af;font-size:17px}
 
+    /* problem section */
+    .problem-grid{
+      display:grid;grid-template-columns:repeat(3,1fr);gap:16px;max-width:1000px;margin:0 auto;
+    }
+    @media(max-width:820px){.problem-grid{grid-template-columns:1fr}}
+    .problem-card{
+      background:linear-gradient(180deg,rgba(244,63,94,.04),rgba(255,255,255,0));
+      border:1px solid rgba(244,63,94,.12);border-radius:16px;padding:30px;
+      position:relative;overflow:hidden;
+      transition:border-color .3s,transform .3s;
+    }
+    .problem-card:hover{border-color:rgba(244,63,94,.3);transform:translateY(-2px)}
+    .problem-num{
+      display:inline-flex;align-items:center;justify-content:center;
+      width:28px;height:28px;border-radius:8px;
+      background:rgba(244,63,94,.12);color:#fb7185;
+      font-family:"JetBrains Mono",monospace;font-size:12px;font-weight:500;
+      margin-bottom:18px;
+    }
+    .problem-card h3{
+      font-size:17px;font-weight:600;margin-bottom:10px;letter-spacing:-.01em;
+      color:#f4f5f7;
+    }
+    .problem-card p{color:#9ca3af;font-size:14px;line-height:1.6}
+    .problem-card code{
+      font-family:"JetBrains Mono",monospace;font-size:12.5px;
+      color:#fda4af;background:rgba(244,63,94,.08);padding:1px 6px;border-radius:4px;
+    }
+    .verdict{
+      max-width:720px;margin:56px auto 0;text-align:center;
+      padding:28px;border-radius:16px;
+      background:linear-gradient(135deg,rgba(244,63,94,.06),rgba(124,58,237,.04));
+      border:1px solid rgba(244,63,94,.14);
+      font-size:17px;color:#e5e7eb;line-height:1.55;
+    }
+    .verdict strong{color:#fda4af}
+    .verdict .arrow{color:#a78bfa;font-family:"JetBrains Mono",monospace;margin:0 10px}
+
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
     .card{
       background:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,0));
@@ -223,6 +261,7 @@
         <span>AgenticVault</span>
       </div>
       <div class="links">
+        <a href="#problem">Problem</a>
         <a href="#features">Features</a>
         <a href="#how">How it works</a>
         <a class="cta-ghost" href="mailto:haaamcar@gmail.com?subject=AgenticVault%20access">Request access</a>
@@ -253,9 +292,38 @@
       <span>Encrypted audit at rest</span>
     </div>
 
+    <section id="problem">
+      <div class="section-head">
+        <div class="section-tag">The problem</div>
+        <h2>Your agent needs your keys.<br/>Your keys shouldn't need your agent.</h2>
+        <p>Every team shipping with Claude Code, Cursor, or Cline hits the same three walls — and most never fully close them.</p>
+      </div>
+      <div class="problem-grid">
+        <div class="problem-card">
+          <div class="problem-num">01</div>
+          <h3>Raw values reach the model</h3>
+          <p>Reading <code>.env</code>, dumping <code>process.env</code>, or asking "paste your token" puts plaintext in the model's context. That context gets logged, replayed, and in many providers — retained.</p>
+        </div>
+        <div class="problem-card">
+          <div class="problem-num">02</div>
+          <h3>No guardrails on actions</h3>
+          <p>An agent with your Stripe key can charge anything. With your AWS key it can spin anything. With your shell env it can run anything. There's nothing between "agent decided" and "action happened."</p>
+        </div>
+        <div class="problem-card">
+          <div class="problem-num">03</div>
+          <h3>No forensics after the fact</h3>
+          <p>When something goes wrong you get <em>"the model said it deployed"</em> — not a signed, encrypted record of exactly which request, which injection, which response. You can't review what you can't see.</p>
+        </div>
+      </div>
+      <div class="verdict">
+        Existing secret managers (Doppler, 1Password, HashiCorp) hand raw values to whoever asks.<br/>
+        <span class="arrow">→</span><strong>There's no layer between agent and secret.</strong><span class="arrow">←</span>
+      </div>
+    </section>
+
     <section id="features">
       <div class="section-head">
-        <div class="section-tag">What's inside</div>
+        <div class="section-tag">The solution</div>
         <h2>Built for the post-agent reality.</h2>
         <p>13 features shipped. Every line guarded by 314 tests. Every secret path audited end-to-end.</p>
       </div>
