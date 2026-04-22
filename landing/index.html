@@ -936,5 +936,38 @@
       });
     });
   </script>
+  <script>
+    if (typeof navigator !== 'undefined' && navigator.modelContext) {
+      navigator.modelContext.provideContext({
+        tools: [
+          {
+            name: 'get_site_info',
+            description: 'Get information about Agentic Vault — the MCP-native secrets gateway for AI agents. Returns product description, features, and discovery links.',
+            inputSchema: { type: 'object', properties: {} },
+            execute: async () => ({
+              name: 'Agentic Vault',
+              tagline: 'The secret gateway for AI agents',
+              description: 'Policy-enforced secret injection into HTTP calls and subprocesses. Encrypted audit trail. Zero plaintext exposure to the model.',
+              features: [
+                'Zero-plaintext injection — secret values substituted at call time inside the vault',
+                'Per-secret policy engine — allow-lists for HTTP hosts, commands, env vars; deny by default',
+                'AES-256-GCM encrypted vault with argon2id key derivation',
+                'Encrypted audit trail with forensic detail per entry',
+                'Scoped vaults — global and project-local, project overrides on collision',
+                'MCP-native — works with any agent that supports the Model Context Protocol',
+              ],
+              links: {
+                homepage: 'https://agenticvault.madhoob.dev',
+                mcpServerCard: 'https://agenticvault.madhoob.dev/.well-known/mcp/server-card.json',
+                apiCatalog: 'https://agenticvault.madhoob.dev/.well-known/api-catalog',
+                agentSkills: 'https://agenticvault.madhoob.dev/.well-known/agent-skills/index.json',
+                requestAccess: 'mailto:haaamcar@gmail.com?subject=AgenticVault',
+              },
+            }),
+          },
+        ],
+      });
+    }
+  </script>
 </body>
 </html>

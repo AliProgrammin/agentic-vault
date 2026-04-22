@@ -1,0 +1,22 @@
+{
+  "serverInfo": {
+    "name": "Agentic Vault",
+    "version": "0.0.1",
+    "description": "Open-source MCP server for secure AI agent secret injection. Policy-enforced injection into HTTP calls and subprocesses. Zero plaintext exposure to the model."
+  },
+  "transport": [
+    {
+      "type": "stdio"
+    }
+  ],
+  "capabilities": {
+    "tools": {}
+  },
+  "installation": {
+    "npm": "npx secretproxy init && npx secretproxy run"
+  },
+  "links": {
+    "homepage": "https://agenticvault.madhoob.dev",
+    "requestAccess": "mailto:haaamcar@gmail.com?subject=AgenticVault"
+  }
+}

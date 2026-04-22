@@ -1,0 +1,23 @@
+{
+  "linkset": [
+    {
+      "anchor": "https://agenticvault.madhoob.dev",
+      "service-doc": [
+        {
+          "href": "https://agenticvault.madhoob.dev/",
+          "type": "text/html"
+        },
+        {
+          "href": "https://agenticvault.madhoob.dev/index.md",
+          "type": "text/markdown"
+        }
+      ],
+      "describedby": [
+        {
+          "href": "https://agenticvault.madhoob.dev/.well-known/mcp/server-card.json",
+          "type": "application/json"
+        }
+      ]
+    }
+  ]
+}

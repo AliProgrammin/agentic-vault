@@ -1,0 +1,33 @@
+{
+  "$schema": "https://agentskills.io/schema/v0.2.0/index.json",
+  "skills": [
+    {
+      "name": "http_request",
+      "type": "mcp-tool",
+      "description": "Make an HTTP request with a stored secret injected as a header or query param — the model never sees the credential value.",
+      "url": "https://agenticvault.madhoob.dev/.well-known/mcp/server-card.json",
+      "sha256": ""
+    },
+    {
+      "name": "run_command",
+      "type": "mcp-tool",
+      "description": "Run a subprocess with secrets injected as environment variables — the model specifies the command but credentials stay hidden.",
+      "url": "https://agenticvault.madhoob.dev/.well-known/mcp/server-card.json",
+      "sha256": ""
+    },
+    {
+      "name": "list_secrets",
+      "type": "mcp-tool",
+      "description": "List secret names currently in scope with policy summaries (counts only) — no values, no hostnames, no patterns exposed.",
+      "url": "https://agenticvault.madhoob.dev/.well-known/mcp/server-card.json",
+      "sha256": ""
+    },
+    {
+      "name": "scan_env_requirement",
+      "type": "mcp-tool",
+      "description": "Scan a project directory for environment variable requirements and check which are satisfied by stored secrets.",
+      "url": "https://agenticvault.madhoob.dev/.well-known/mcp/server-card.json",
+      "sha256": ""
+    }
+  ]
+}
