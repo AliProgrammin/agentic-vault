@@ -306,6 +306,26 @@ export class VaultHandle {
     return this.closed;
   }
 
+  public async reload(): Promise<void> {
+    this.assertOpen();
+    const bytes = await fs.readFile(this.filePath);
+    const env = parseEnvelope(bytes);
+    const nonce = Buffer.from(env.nonce, "base64");
+    const ciphertext = Buffer.from(env.ciphertext, "base64");
+    const tag = Buffer.from(env.tag, "base64");
+    let plaintext: Buffer;
+    try {
+      plaintext = decryptPayload(ciphertext, this.key, nonce, tag);
+    } catch {
+      return;
+    }
+    try {
+      this.payload = parsePayload(plaintext);
+    } finally {
+      plaintext.fill(0);
+    }
+  }
+
   /**
    * Returns the vault-level strict_mode flag. Consumed by `policy set` to
    * decide whether wildcard entries are accepted at parse time.

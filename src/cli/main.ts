@@ -16,7 +16,6 @@ import { cmdPolicySet, cmdPolicyShow } from "./commands/policy.js";
 import { cmdRemove } from "./commands/remove.js";
 import { cmdRotate } from "./commands/rotate.js";
 import { cmdRun } from "./commands/run.js";
-import { cmdTui } from "./commands/tui.js";
 import { cmdUi } from "./commands/ui.js";
 import {
   CliError,
@@ -268,6 +267,7 @@ export function buildProgram(deps: CliDeps): Command {
     .command("tui")
     .description("Start the interactive SecretProxy terminal UI.")
     .action(async () => {
+      const { cmdTui } = await import("./commands/tui.js");
       await cmdTui(deps);
     });
 

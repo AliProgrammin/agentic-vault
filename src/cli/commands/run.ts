@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import { watch } from "node:fs";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { EncryptedBodyStore } from "../../audit/index.js";
 import {
@@ -51,7 +52,15 @@ export async function cmdRun(deps: CliDeps): Promise<void> {
       (s: McpServer): void => registerRunCommand(s, runDeps),
     ];
     const server = deps.createMcpServer(mcpDeps, { extraTools });
-    await deps.connectStdio(server);
+    const watchers = [
+      global ? watch(deps.globalVaultPath, () => { void global!.reload(); }) : null,
+      project && loc ? watch(loc.vaultPath, () => { void project!.reload(); }) : null,
+    ].filter(Boolean);
+    try {
+      await deps.connectStdio(server);
+    } finally {
+      for (const w of watchers) w?.close();
+    }
   } catch (err) {
     global?.close();
     project?.close();
