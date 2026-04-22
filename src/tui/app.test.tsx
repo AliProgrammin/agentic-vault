@@ -90,14 +90,21 @@ describe("TuiApp", () => {
     });
 
     expect(app.lastFrame()).toMatchInlineSnapshot(`
-      "SecretProxy TUI
-      screen=dashboard  global=1  project=0
-      Dashboard | MCP offline
-      Vault mtimes | global=1970-01-01T00:00:00.001Z | project=missing
-      Risky policies=1
-      Last 10 audit entries
-      > 2026-04-21T10:00:00.000Z allowed API_TOKEN api.example.com
-      Keys: / dashboard, s secrets, u audit, p policies, ? help"
+      "Agentic Vault          / home  s secrets  u audit  p policies  ? help  q quit          ○ MCP offline
+      ╭────────────────╮ ╭─────────────────╮ ╭────────────╮ ╭────────────────╮
+      │                │ │                 │ │            │ │                │
+      │ global secrets │ │ project secrets │ │ MCP server │ │ risky policies │
+      │ 1              │ │ 0               │ │ ○ offline  │ │ 1              │
+      │                │ │                 │ │            │ │                │
+      ╰────────────────╯ ╰─────────────────╯ ╰────────────╯ ╰────────────────╯
+
+      ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+      │ Dashboard | MCP offline                                                                          │
+      │ Vault mtimes | global=1970-01-01T00:00:00.001Z | project=missing                                 │
+      │ Risky policies=1                                                                                 │
+      │ Recent audit activity                                                                            │
+      │ ✓ 2026-04-21T10:00:00.000Z API_TOKEN api.example.com                                             │
+      ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"
     `);
     app.unmount();
   });

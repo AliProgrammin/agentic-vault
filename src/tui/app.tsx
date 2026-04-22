@@ -21,7 +21,6 @@ import TextInput from "ink-text-input";
 import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import {
   buildRenderModel,
-  formatAuditDetail,
   readAuditEntries,
   type AuditEvent,
   type BuildRenderOptions,
@@ -41,6 +40,12 @@ import { WrongPasswordError, type VaultHandle } from "../vault/index.js";
 import type { CliDeps } from "../cli/types.js";
 import { parseBulkSecretInput, type BulkImportPreview } from "./bulk-import.js";
 import { installTerminalLifecycle } from "./runtime.js";
+import { StatusBar } from "./components/StatusBar.js";
+import { DashboardScreen } from "./screens/DashboardScreen.js";
+import { SecretsScreen } from "./screens/SecretsScreen.js";
+import { AuditScreen } from "./screens/AuditScreen.js";
+import { PoliciesScreen } from "./screens/PoliciesScreen.js";
+import { theme } from "./theme.js";
 
 const execFileAsync = promisify(execFile);
 const UI_PORT = 7381;
@@ -534,13 +539,6 @@ export function buildAuditDetailModelForTui(
   return buildRenderModel(event, opts);
 }
 
-function renderAuditRows(entries: readonly AuditEvent[], selected: number): string[] {
-  return entries.slice(-10).reverse().map((entry, index) => {
-    const prefix = index === selected ? ">" : " ";
-    return `${prefix} ${entry.ts} ${entry.outcome} ${entry.secret_name} ${entry.target}`;
-  });
-}
-
 function HelpOverlay(): ReactElement {
   const lines = [
     "/ dashboard",
@@ -562,9 +560,9 @@ function HelpOverlay(): ReactElement {
   ];
   return (
     <Box borderStyle="round" flexDirection="column" padding={1}>
-      <Text>Help</Text>
+      <Text bold color={theme.accent}>Help</Text>
       {lines.map((line) => (
-        <Text key={line}>{line}</Text>
+        <Text key={line} color={theme.dim}>{line}</Text>
       ))}
     </Box>
   );
@@ -574,9 +572,13 @@ function PaletteOverlay(props: { readonly selected: number }): ReactElement {
   const items = ["Dashboard", "Secrets", "Audit", "Policies"];
   return (
     <Box borderStyle="round" flexDirection="column" padding={1}>
-      <Text>Command palette</Text>
+      <Text bold color={theme.accent}>Command palette</Text>
       {items.map((item, index) => (
-        <Text key={item}>{index === props.selected ? ">" : " "} {item}</Text>
+        index === props.selected ? (
+          <Text key={item} color={theme.accent}>{"▶ "}{item}</Text>
+        ) : (
+          <Text key={item}>{"  "}{item}</Text>
+        )
       ))}
     </Box>
   );
@@ -588,7 +590,7 @@ export function TuiApp(props: AppProps): ReactElement {
   const [session, setSession] = useState<TuiSession | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [loading, setLoading] = useState(true);
-  const [unlock, setUnlock] = useState<{ value: string; error: string | null } | null>(null);
+  const [unlock, setUnlock] = useState<{ value: string; error: string | null; hasVault: boolean } | null>(null);
   const [message, setMessage] = useState<MessageState | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [filter, setFilter] = useState<FilterState | null>(null);
@@ -627,7 +629,8 @@ export function TuiApp(props: AppProps): ReactElement {
         await refresh(nextSession);
       } catch (err) {
         if (!cancelled && err instanceof VaultLockedError) {
-          setUnlock({ value: "", error: null });
+          const hasVault = await props.deps.fileExists(props.deps.globalVaultPath);
+          setUnlock({ value: "", error: null, hasVault });
         }
       } finally {
         if (!cancelled) {
@@ -788,7 +791,7 @@ export function TuiApp(props: AppProps): ReactElement {
       await refresh(nextSession);
     } catch (err) {
       const text = err instanceof WrongPasswordError ? err.message : String(err);
-      setUnlock({ value: "", error: text });
+      setUnlock({ ...unlock, value: "", error: text });
     }
   };
 
@@ -1065,22 +1068,29 @@ export function TuiApp(props: AppProps): ReactElement {
   });
 
   if (loading) {
-    return <Text>Loading SecretProxy TUI...</Text>;
+    return <Text color={theme.dim}>Loading...</Text>;
   }
   if (unlock !== null) {
+    const isNew = !unlock.hasVault;
     return (
-      <Box flexDirection="column">
-        <Text>Unlock SecretProxy</Text>
-        <Text>Vault is locked. Enter the master password to continue.</Text>
-        <TextInput
-          value={unlock.value}
-          mask="*"
-          onChange={(value) => setUnlock({ ...unlock, value })}
-          onSubmit={() => {
-            void tryUnlock();
-          }}
-        />
-        {unlock.error !== null ? <Text color="red">{unlock.error}</Text> : null}
+      <Box justifyContent="center" alignItems="center" flexDirection="column">
+        <Box borderStyle="round" flexDirection="column" padding={2} width={60}>
+          <Text color={theme.accent} bold>{isNew ? "Set Up Agentic Vault" : "Unlock Agentic Vault"}</Text>
+          <Text color={theme.dim}>
+            {isNew
+              ? "No vault found. Enter a new master password to create one (min 12 characters)."
+              : "Enter your master password to continue."}
+          </Text>
+          <TextInput
+            value={unlock.value}
+            mask="*"
+            onChange={(value) => setUnlock({ ...unlock, value })}
+            onSubmit={() => {
+              void tryUnlock();
+            }}
+          />
+          {unlock.error !== null ? <Text color="red">{unlock.error}</Text> : null}
+        </Box>
       </Box>
     );
   }
@@ -1093,172 +1103,149 @@ export function TuiApp(props: AppProps): ReactElement {
 
   return (
     <Box flexDirection="column">
-      <Text>SecretProxy TUI</Text>
-      <Text>{`screen=${screen}  global=${String(snapshot?.dashboard.globalCount ?? 0)}  project=${String(snapshot?.dashboard.projectCount ?? 0)}`}</Text>
+      <StatusBar screen={screen} {...(snapshot !== null ? { mcpOnline: snapshot.dashboard.mcpOnline } : {})} />
       {message !== null ? <Text color={message.kind === "error" ? "red" : "green"}>{message.text}</Text> : null}
+
       {screen === "dashboard" && snapshot !== null ? (
-        <Box flexDirection="column">
-          <Text>{`Dashboard | MCP ${snapshot.dashboard.mcpOnline ? "online" : "offline"}`}</Text>
-          <Text>{`Vault mtimes | global=${snapshot.dashboard.globalMtime} | project=${snapshot.dashboard.projectMtime}`}</Text>
-          <Text>{`Risky policies=${String(snapshot.dashboard.riskyPolicyCount)}`}</Text>
-          <Text>Last 10 audit entries</Text>
-          {renderAuditRows(snapshot.audit, 0).map((line) => <Text key={line}>{line}</Text>)}
-          <Text>Keys: / dashboard, s secrets, u audit, p policies, ? help</Text>
-        </Box>
+        <DashboardScreen dashboard={snapshot.dashboard} audit={snapshot.audit} />
       ) : null}
+
       {screen === "secrets" ? (
-        <Box flexDirection="column">
-          <Text>{`Secrets | filter=${secretFilter || "(none)"}`}</Text>
-          {secretRows.map((secret, index) => (
-            <Text key={`${secret.scope}:${secret.name}`}>{index === selectedSecret ? ">" : " "} {secret.name} [{secret.scope}] {policyBadgeTokens(secret.policy).join(" ")}</Text>
-          ))}
-          {selectedSecretRow !== null ? (
-            <Box flexDirection="column">
-              <Text>{`Selected=${selectedSecretRow.name}`}</Text>
-              <Text>{`Created=${selectedSecretRow.createdAt}`}</Text>
-              <Text>{`Last rotated=${selectedSecretRow.updatedAt}`}</Text>
-              <Text>{`Policy badges=${policyBadgeTokens(selectedSecretRow.policy).join(" ") || "none"}`}</Text>
-              <Text>Value=hidden</Text>
-            </Box>
-          ) : <Text>No secrets</Text>}
-        </Box>
+        <SecretsScreen
+          secrets={secretRows}
+          selected={selectedSecret}
+          filter={secretFilter}
+          selectedSecret={selectedSecretRow}
+        />
       ) : null}
+
       {screen === "audit" ? (
-        <Box flexDirection="column">
-          <Text>{`Audit | filter=${auditFilter || "(none)"}`}</Text>
-          {!auditDetail
-            ? filteredAudit.map((entry, index) => (
-                <Text key={entry.request_id}>{index === selectedAudit ? ">" : " "} {entry.ts} {entry.outcome} {entry.secret_name} {entry.target}</Text>
-              ))
-            : model !== null
-              ? (
-                <Box flexDirection="column">
-                  {formatAuditDetail(model, { tty: false })
-                    .trimEnd()
-                    .split("\n")
-                    .map((line, index) => <Text key={`audit-detail:${String(index)}:${line}`}>{line}</Text>)}
-                </Box>
-              )
-              : <Text>No audit entry selected</Text>}
-        </Box>
+        <AuditScreen
+          entries={filteredAudit}
+          selected={selectedAudit}
+          filter={auditFilter}
+          auditDetail={auditDetail}
+          model={model}
+        />
       ) : null}
+
       {screen === "policies" ? (
-        <Box flexDirection="column">
-          <Text>Policies</Text>
-          {selectedPolicyHandle?.getStrictMode() === true ? (
-            <Text color="red">strict mode is enabled for this vault; wildcard saves are rejected</Text>
-          ) : null}
-          {secretRows.map((secret, index) => (
-            <Text key={`policy:${secret.scope}:${secret.name}`}>{index === selectedSecret ? ">" : " "} {secret.name} [{secret.scope}] {policyBadgeTokens(secret.policy).join(" ")}</Text>
-          ))}
-          {selectedSecretRow !== null ? (
-            <Box flexDirection="column">
-              <Text>{`Policy for ${selectedSecretRow.name}`}</Text>
-              <Text>Allowed HTTP hosts</Text>
-              {policyView.hosts.length > 0 ? policyView.hosts.map((host) => <Text key={`host:${host}`}>- {host}</Text>) : <Text>- none</Text>}
-              <Text>Allowed commands</Text>
-              {policyView.commands.length > 0 ? policyView.commands.map((command) => <Text key={`cmd:${command}`}>- {command}</Text>) : <Text>- none</Text>}
-              <Text>Allowed env vars</Text>
-              {policyView.envs.length > 0 ? policyView.envs.map((env) => <Text key={`env:${env}`}>- {env}</Text>) : <Text>- none</Text>}
-              <Text>{`Rate limit=${policyView.rate}`}</Text>
-            </Box>
-          ) : null}
-        </Box>
+        <PoliciesScreen
+          secrets={secretRows}
+          selected={selectedSecret}
+          selectedSecret={selectedSecretRow}
+          policyView={policyView}
+          strictMode={selectedPolicyHandle?.getStrictMode() === true}
+        />
       ) : null}
+
       {filter !== null ? (
         <Box borderStyle="round" flexDirection="column" padding={1}>
-          <Text>{`Filter ${filter.screen}`}</Text>
-          {filter.screen === "audit" ? <Text>Use `secret:NAME`, `surface:NAME`, `status:allowed|denied`, or plain text.</Text> : null}
+          <Text color={theme.accent} bold>Filter {filter.screen}</Text>
+          {filter.screen === "audit" ? (
+            <Text color={theme.dim}>Use `secret:NAME`, `surface:NAME`, `status:allowed|denied`, or plain text.</Text>
+          ) : null}
           <TextInput value={filter.value} onChange={(value) => setFilter({ ...filter, value })} />
         </Box>
       ) : null}
+
       {dialog?.kind === "add" || dialog?.kind === "rotate" ? (
         <Box borderStyle="round" flexDirection="column" padding={1}>
-          <Text>{dialog.kind === "add" ? "Add secret" : "Rotate secret"}</Text>
-          <Text>{`scope=${dialog.scope}`}</Text>
-          <Text>Name</Text>
+          <Text color={theme.accent} bold>{dialog.kind === "add" ? "Add secret" : "Rotate secret"}</Text>
+          <Text color={theme.dim}>scope: {dialog.scope}</Text>
+          <Text color={theme.dim}>Name</Text>
           <TextInput
             focus={dialog.focus === "name"}
             value={dialog.name}
             onChange={(name) => setDialog({ ...dialog, name })}
           />
-          <Text>{`Value hidden (${String(dialog.value.length)} chars)`}</Text>
+          <Text color={theme.dim}>Value hidden ({String(dialog.value.length)} chars)</Text>
           <TextInput
             focus={dialog.focus === "value"}
             mask="*"
             value={dialog.value}
             onChange={(value) => setDialog({ ...dialog, value })}
           />
-          <Text>Press p in the value field to paste from clipboard.</Text>
+          <Text color={theme.dim}>Press p in the value field to paste from clipboard.</Text>
         </Box>
       ) : null}
+
       {dialog?.kind === "bulk" ? (
         <Box borderStyle="round" flexDirection="column" padding={1}>
-          <Text>Bulk add</Text>
+          <Text color={theme.accent} bold>Bulk add</Text>
           {dialog.preview === null ? (
             <>
-              <Text>{`Hidden buffer: ${String(dialog.buffer.split(/\r?\n/u).filter((line) => line.length > 0).length)} lines, ${String(dialog.buffer.length)} chars`}</Text>
-              <Text>Paste with p, then press Enter for a preview.</Text>
+              <Text color={theme.dim}>
+                Hidden buffer: {String(dialog.buffer.split(/\r?\n/u).filter((line) => line.length > 0).length)} lines, {String(dialog.buffer.length)} chars
+              </Text>
+              <Text color={theme.dim}>Paste with p, then press Enter for a preview.</Text>
             </>
           ) : (
             <>
-              <Text>{`${String(dialog.preview.added.length)} secrets will be added, ${String(dialog.preview.skipped.length)} will be skipped`}</Text>
-              <Text>{`scope=${dialog.scope}`}</Text>
+              <Text color={theme.dim}>
+                {String(dialog.preview.added.length)} secrets will be added, {String(dialog.preview.skipped.length)} will be skipped
+              </Text>
+              <Text color={theme.dim}>scope: {dialog.scope}</Text>
               {dialog.preview.added.map((entry) => (
-                <Text key={`add:${String(entry.line)}:${entry.name}`}>{`add ${entry.name}`}</Text>
+                <Text key={`add:${String(entry.line)}:${entry.name}`}>add {entry.name}</Text>
               ))}
               {dialog.preview.skipped.map((skip) => (
-                <Text key={`skip:${String(skip.line)}`}>{`line ${String(skip.line)}: ${skip.reason}`}</Text>
+                <Text key={`skip:${String(skip.line)}`} color={theme.dim}>line {String(skip.line)}: {skip.reason}</Text>
               ))}
             </>
           )}
         </Box>
       ) : null}
+
       {dialog?.kind === "delete" ? (
         <Box borderStyle="round" flexDirection="column" padding={1}>
-          <Text>{`Delete ${dialog.name}? y/N`}</Text>
+          <Text bold>Delete &quot;{dialog.name}&quot; from {dialog.scope}?</Text>
+          <Text color={theme.dim}>[y] yes  [n] no</Text>
         </Box>
       ) : null}
+
       {dialog?.kind === "policy" ? (
         <Box borderStyle="round" flexDirection="column" padding={1}>
           {dialog.awaitingConfirm ? (
             <>
-              <Text>{`You are enabling a wildcarded policy. This broadens what the agent can do with secret ${selectedSecretRow?.name ?? ""}. Continue? y/N`}</Text>
+              <Text bold>
+                You are enabling a wildcarded policy. This broadens what the agent can do with secret {selectedSecretRow?.name ?? ""}. Continue? y/N
+              </Text>
             </>
           ) : (
             <>
               {(() => {
                 const previewPolicy = buildPolicyFromDialog(dialog);
                 const badges = policyBadgeTokens(previewPolicy instanceof Error ? undefined : previewPolicy);
-                return <Text>{`Preview badges: ${badges.join(" ") || "none"}`}</Text>;
+                return <Text color={theme.dim}>Preview badges: {badges.join(" ") || "none"}</Text>;
               })()}
-              <Text>Edit policy</Text>
-              <Text>Fields are structured: hosts/env accept comma-separated values; commands use `binary|allowed1,allowed2|forbidden1,forbidden2` separated by `;`.</Text>
-              <Text>Allowed HTTP hosts</Text>
+              <Text color={theme.accent} bold>Edit policy</Text>
+              <Text color={theme.dim}>Fields are structured: hosts/env accept comma-separated values; commands use `binary|allowed1,allowed2|forbidden1,forbidden2` separated by `;`.</Text>
+              <Text color={dialog.focus === "hosts" ? theme.accent : theme.dim}>Allowed HTTP hosts</Text>
               <TextInput
                 focus={dialog.focus === "hosts"}
                 value={dialog.hostsText}
                 onChange={(hostsText) => setDialog({ ...dialog, hostsText })}
               />
-              <Text>Allowed commands</Text>
+              <Text color={dialog.focus === "commands" ? theme.accent : theme.dim}>Allowed commands</Text>
               <TextInput
                 focus={dialog.focus === "commands"}
                 value={dialog.commandsText}
                 onChange={(commandsText) => setDialog({ ...dialog, commandsText })}
               />
-              <Text>Allowed env vars</Text>
+              <Text color={dialog.focus === "env" ? theme.accent : theme.dim}>Allowed env vars</Text>
               <TextInput
                 focus={dialog.focus === "env"}
                 value={dialog.envText}
                 onChange={(envText) => setDialog({ ...dialog, envText })}
               />
-              <Text>Rate limit requests</Text>
+              <Text color={dialog.focus === "requests" ? theme.accent : theme.dim}>Rate limit requests</Text>
               <TextInput
                 focus={dialog.focus === "requests"}
                 value={dialog.requestsText}
                 onChange={(requestsText) => setDialog({ ...dialog, requestsText })}
               />
-              <Text>Rate limit window seconds</Text>
+              <Text color={dialog.focus === "window" ? theme.accent : theme.dim}>Rate limit window seconds</Text>
               <TextInput
                 focus={dialog.focus === "window"}
                 value={dialog.windowText}
@@ -1268,6 +1255,7 @@ export function TuiApp(props: AppProps): ReactElement {
           )}
         </Box>
       ) : null}
+
       {showHelp ? <HelpOverlay /> : null}
       {palette !== null ? <PaletteOverlay selected={palette.selected} /> : null}
     </Box>
