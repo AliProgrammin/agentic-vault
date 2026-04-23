@@ -1,15 +1,15 @@
-// SecretProxy TUI.
+// SecretProxy TUI (GUI-feel rewrite).
 //
-// Uses Ink for the terminal UI and `clipboardy` for clipboard reads/writes.
+// Single shared `useInput` handler routes every keystroke based on
+// the current focus `region`. Only five keys are globally meaningful:
+// arrows, Tab, Enter, Esc (plus Ctrl+C to quit and Ctrl+K to open
+// the command palette). No single-letter shortcuts.
+//
 // Clipboard-backed secret values are never rendered back to the terminal:
-// value inputs are masked, bulk-import buffers stay hidden, and the state slot
-// is cleared immediately after save (with a second best-effort clear on a
-// 2-second timer because JS strings cannot be zeroized reliably in memory).
-//
-// The dashboard's MCP indicator uses a lightweight `ps` process scan rather
-// than a pidfile because the existing `secretproxy run` command does not yet
-// emit one. The audit-detail panel and policy wildcard badges both reuse the
-// shared F13/F14 render helpers so the TUI cannot drift from the CLI/UI.
+// value inputs are masked, bulk-import buffers stay hidden, and the state
+// slot is cleared immediately after save (with a second best-effort clear
+// on a 2-second timer because JS strings cannot be zeroized reliably in
+// memory).
 
 import { execFile } from "node:child_process";
 import { promises as fs, watch as fsWatch } from "node:fs";
@@ -20,12 +20,10 @@ import { Box, render, Text, useApp, useInput } from "ink";
 import TextInput from "ink-text-input";
 import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import {
-  buildRenderModel,
   readAuditEntries,
   type AuditEvent,
-  type BuildRenderOptions,
-  type RenderModel,
 } from "../audit/index.js";
+import { formatAuditDetail } from "../audit/index.js";
 import { VaultLockedError } from "../keychain/index.js";
 import {
   entryValue,
@@ -38,19 +36,34 @@ import {
 import { listMerged } from "../scope/index.js";
 import { WrongPasswordError, type VaultHandle } from "../vault/index.js";
 import type { CliDeps } from "../cli/types.js";
+import {
+  buildAuditDetailModelForTui,
+  hasWildcardPolicy,
+  policyBadgeTokens,
+} from "./app-exports.js";
 import { parseBulkSecretInput, type BulkImportPreview } from "./bulk-import.js";
 import { installTerminalLifecycle } from "./runtime.js";
-import { StatusBar } from "./components/StatusBar.js";
+import { Button } from "./components/Button.js";
+import { CommandPalette, filterCommands, type PaletteCommand } from "./components/CommandPalette.js";
+import { Dialog } from "./components/Dialog.js";
+import { FormField } from "./components/FormField.js";
+import { HelpBar, type HelpHint } from "./components/HelpBar.js";
+import { TabBar, TAB_LABELS } from "./components/TabBar.js";
+import { type ToolbarButton } from "./components/Toolbar.js";
+import { Toast } from "./components/Toast.js";
 import { DashboardScreen } from "./screens/DashboardScreen.js";
 import { SecretsScreen } from "./screens/SecretsScreen.js";
 import { AuditScreen } from "./screens/AuditScreen.js";
 import { PoliciesScreen } from "./screens/PoliciesScreen.js";
 import { theme } from "./theme.js";
 
+export { buildAuditDetailModelForTui, policyBadgeTokens };
+
 const execFileAsync = promisify(execFile);
 const UI_PORT = 7381;
 
 type Screen = "dashboard" | "secrets" | "audit" | "policies";
+type Region = "tabs" | "body" | "toolbar" | "dialog" | "palette";
 type ScopeChoice = "global" | "project";
 
 interface ClipboardAdapter {
@@ -108,17 +121,29 @@ interface Snapshot {
   };
 }
 
-interface MessageState {
-  readonly kind: "error" | "info";
+interface ToastState {
+  readonly kind: "success" | "error" | "info";
   readonly text: string;
 }
+
+// Dialog state machines. Every dialog tracks which "focus slot" is
+// active; slots include form fields, per-field paste buttons, and
+// the action row at the bottom.
+
+// A dialog focus slot is either a field index `{ kind: 'field', index }`
+// or the action row `{ kind: 'actions' }`.
+
+type DialogFocus =
+  | { readonly kind: "field"; readonly index: number; readonly onPaste: boolean }
+  | { readonly kind: "actions"; readonly index: number };
 
 interface AddDialogState {
   readonly kind: "add" | "rotate";
   readonly scope: ScopeChoice;
   readonly name: string;
   readonly value: string;
-  readonly focus: "name" | "value";
+  readonly focus: DialogFocus;
+  readonly error: string | null;
 }
 
 interface BulkDialogState {
@@ -126,39 +151,44 @@ interface BulkDialogState {
   readonly buffer: string;
   readonly preview: BulkImportPreview | null;
   readonly scope: ScopeChoice;
+  readonly focus: DialogFocus;
+  readonly error: string | null;
 }
 
 interface DeleteDialogState {
   readonly kind: "delete";
   readonly name: string;
   readonly scope: ScopeChoice;
+  readonly focus: DialogFocus; // always actions
 }
 
 interface PolicyDialogState {
   readonly kind: "policy";
+  readonly targetName: string;
+  readonly targetScope: ScopeChoice;
   readonly hostsText: string;
   readonly commandsText: string;
   readonly envText: string;
   readonly requestsText: string;
   readonly windowText: string;
-  readonly focus: "hosts" | "commands" | "env" | "requests" | "window";
+  readonly focus: DialogFocus;
   readonly awaitingConfirm: boolean;
+  readonly error: string | null;
+}
+
+interface FilterDialogState {
+  readonly kind: "filter";
+  readonly target: "secrets" | "audit";
+  readonly value: string;
+  readonly focus: DialogFocus;
 }
 
 type DialogState =
   | AddDialogState
   | BulkDialogState
   | DeleteDialogState
-  | PolicyDialogState;
-
-interface FilterState {
-  readonly screen: "secrets" | "audit";
-  readonly value: string;
-}
-
-interface PaletteState {
-  readonly selected: number;
-}
+  | PolicyDialogState
+  | FilterDialogState;
 
 interface AppProps {
   readonly deps: CliDeps;
@@ -279,7 +309,10 @@ async function loadSession(deps: CliDeps, password: string): Promise<TuiSession>
 
 function collectSecretRows(session: TuiSession): readonly SecretRow[] {
   const out: SecretRow[] = [];
-  for (const entry of listMerged({ global: session.global?.handle ?? null, project: session.project?.handle ?? null })) {
+  for (const entry of listMerged({
+    global: session.global?.handle ?? null,
+    project: session.project?.handle ?? null,
+  })) {
     out.push({
       name: entry.name,
       scope: entry.scope,
@@ -293,33 +326,6 @@ function collectSecretRows(session: TuiSession): readonly SecretRow[] {
 
 function formatMtime(mtimeMs: number | null): string {
   return mtimeMs === null ? "missing" : new Date(mtimeMs).toISOString();
-}
-
-function collectWildcardKinds(entries: readonly PolicyEntry[]): readonly string[] {
-  const tokens = new Set<string>();
-  for (const entry of entries) {
-    if (isWildcardEntry(entry)) {
-      tokens.add(wildcardBadge(entry.wildcard_kind, { tty: false }));
-    }
-  }
-  return [...tokens];
-}
-
-export function policyBadgeTokens(policy: Policy | undefined): readonly string[] {
-  if (policy === undefined) {
-    return [];
-  }
-  const tokens = new Set<string>();
-  for (const token of collectWildcardKinds(policy.allowed_http_hosts)) tokens.add(token);
-  for (const command of policy.allowed_commands) {
-    for (const token of collectWildcardKinds([command.binary])) tokens.add(token);
-  }
-  for (const token of collectWildcardKinds(policy.allowed_env_vars)) tokens.add(token);
-  return [...tokens];
-}
-
-function hasWildcardPolicy(policy: Policy | undefined): boolean {
-  return policyBadgeTokens(policy).length > 0;
 }
 
 async function buildSnapshot(
@@ -374,18 +380,6 @@ async function ensureScopeHandle(
     handle: created.handle,
   };
   return session.project;
-}
-
-function findSelectedSecret(
-  snapshot: Snapshot | null,
-  filter: string,
-  selected: number,
-): SecretRow | null {
-  if (snapshot === null) {
-    return null;
-  }
-  const rows = snapshot.secrets.filter((secret) => secret.name.toLowerCase().includes(filter.toLowerCase()));
-  return rows[selected] ?? rows[0] ?? null;
 }
 
 function filterAuditEntriesForTui(entries: readonly AuditEvent[], filter: string): readonly AuditEvent[] {
@@ -475,9 +469,15 @@ function formatPolicyForScreen(policy: Policy | null): {
   };
 }
 
-function policyToDialogState(policy: Policy | null): PolicyDialogState {
+function policyToDialogState(
+  policy: Policy | null,
+  targetName: string,
+  targetScope: ScopeChoice,
+): PolicyDialogState {
   return {
     kind: "policy",
+    targetName,
+    targetScope,
     hostsText: policy?.allowed_http_hosts.map((entry) => entryValue(entry)).join(", ") ?? "",
     commandsText:
       policy?.allowed_commands
@@ -489,8 +489,9 @@ function policyToDialogState(policy: Policy | null): PolicyDialogState {
     envText: policy?.allowed_env_vars.map((entry) => entryValue(entry)).join(", ") ?? "",
     requestsText: String(policy?.rate_limit.requests ?? 1),
     windowText: String(policy?.rate_limit.window_seconds ?? 60),
-    focus: "hosts",
+    focus: { kind: "field", index: 0, onPaste: false },
     awaitingConfirm: false,
+    error: null,
   };
 }
 
@@ -503,28 +504,32 @@ function buildPolicyFromDialog(dialog: PolicyDialogState): Policy | Error {
   if (!Number.isInteger(windowSeconds) || windowSeconds <= 0) {
     return new Error("rate window must be a positive integer");
   }
-  const allowed_commands = splitFieldEntries(dialog.commandsText.replace(/;/gu, "\n")).map((line) => {
-    const [binaryRaw, allowedRaw = "", forbiddenRaw = ""] = line.split("|").map((part) => part.trim());
-    if (binaryRaw === undefined || binaryRaw.length === 0) {
-      throw new Error(`invalid command rule '${line}'`);
-    }
-    const allowed_args_patterns = splitFieldEntries(allowedRaw);
-    if (allowed_args_patterns.length === 0) {
-      throw new Error(`command '${binaryRaw}' must include at least one allowed pattern`);
-    }
-    const forbidden_args_patterns = splitFieldEntries(forbiddenRaw);
+  try {
+    const allowed_commands = splitFieldEntries(dialog.commandsText.replace(/;/gu, "\n")).map((line) => {
+      const [binaryRaw, allowedRaw = "", forbiddenRaw = ""] = line.split("|").map((part) => part.trim());
+      if (binaryRaw === undefined || binaryRaw.length === 0) {
+        throw new Error(`invalid command rule '${line}'`);
+      }
+      const allowed_args_patterns = splitFieldEntries(allowedRaw);
+      if (allowed_args_patterns.length === 0) {
+        throw new Error(`command '${binaryRaw}' must include at least one allowed pattern`);
+      }
+      const forbidden_args_patterns = splitFieldEntries(forbiddenRaw);
+      return {
+        binary: binaryRaw,
+        allowed_args_patterns,
+        ...(forbidden_args_patterns.length > 0 ? { forbidden_args_patterns } : {}),
+      };
+    });
     return {
-      binary: binaryRaw,
-      allowed_args_patterns,
-      ...(forbidden_args_patterns.length > 0 ? { forbidden_args_patterns } : {}),
+      allowed_http_hosts: splitFieldEntries(dialog.hostsText),
+      allowed_commands,
+      allowed_env_vars: splitFieldEntries(dialog.envText),
+      rate_limit: { requests, window_seconds: windowSeconds },
     };
-  });
-  return {
-    allowed_http_hosts: splitFieldEntries(dialog.hostsText),
-    allowed_commands,
-    allowed_env_vars: splitFieldEntries(dialog.envText),
-    rate_limit: { requests, window_seconds: windowSeconds },
-  };
+  } catch (err) {
+    return err instanceof Error ? err : new Error(String(err));
+  }
 }
 
 function getSecretValue(session: TuiSession, secret: SecretRow): string | undefined {
@@ -532,83 +537,94 @@ function getSecretValue(session: TuiSession, secret: SecretRow): string | undefi
   return handle?.get(secret.name);
 }
 
-export function buildAuditDetailModelForTui(
-  event: AuditEvent,
-  opts: BuildRenderOptions = {},
-): RenderModel {
-  return buildRenderModel(event, opts);
+// --- Focus cycling helpers for dialogs -------------------------------
+
+interface FieldSpec {
+  readonly id: string;
+  readonly hasPaste: boolean;
 }
 
-function HelpOverlay(): ReactElement {
-  const lines = [
-    "/ dashboard",
-    "s secrets",
-    "u audit",
-    "p policies",
-    "? help",
-    ": command palette",
-    "j/k move",
-    "a add",
-    "A bulk add",
-    "r rotate",
-    "d delete",
-    "e edit policy",
-    "c copy secret name",
-    "o open local UI",
-    "Esc back",
-    "q quit",
-  ];
-  return (
-    <Box borderStyle="round" flexDirection="column" padding={1}>
-      <Text bold color={theme.accent}>Help</Text>
-      {lines.map((line) => (
-        <Text key={line} color={theme.dim}>{line}</Text>
-      ))}
-    </Box>
-  );
+function nextDialogFocus(
+  focus: DialogFocus,
+  fields: readonly FieldSpec[],
+  actionCount: number,
+): DialogFocus {
+  if (focus.kind === "field") {
+    const field = fields[focus.index];
+    if (field !== undefined && field.hasPaste && !focus.onPaste) {
+      return { kind: "field", index: focus.index, onPaste: true };
+    }
+    const nextIndex = focus.index + 1;
+    if (nextIndex < fields.length) {
+      return { kind: "field", index: nextIndex, onPaste: false };
+    }
+    if (actionCount > 0) {
+      return { kind: "actions", index: 0 };
+    }
+    return { kind: "field", index: 0, onPaste: false };
+  }
+  // actions → wrap to first field (or first action if no fields)
+  if (fields.length > 0) {
+    return { kind: "field", index: 0, onPaste: false };
+  }
+  return { kind: "actions", index: 0 };
 }
 
-function PaletteOverlay(props: { readonly selected: number }): ReactElement {
-  const items = ["Dashboard", "Secrets", "Audit", "Policies"];
-  return (
-    <Box borderStyle="round" flexDirection="column" padding={1}>
-      <Text bold color={theme.accent}>Command palette</Text>
-      {items.map((item, index) => (
-        index === props.selected ? (
-          <Text key={item} color={theme.accent}>{"▶ "}{item}</Text>
-        ) : (
-          <Text key={item}>{"  "}{item}</Text>
-        )
-      ))}
-    </Box>
-  );
-}
+// ---------------------------------------------------------------------
 
 export function TuiApp(props: AppProps): ReactElement {
   const { exit } = useApp();
   const [screen, setScreen] = useState<Screen>("dashboard");
+  const [region, setRegion] = useState<Region>("body");
+  const [tabFocus, setTabFocus] = useState(0);
+  const [toolbarFocus, setToolbarFocus] = useState(0);
   const [session, setSession] = useState<TuiSession | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [loading, setLoading] = useState(true);
-  const [unlock, setUnlock] = useState<{ value: string; error: string | null; hasVault: boolean } | null>(null);
-  const [message, setMessage] = useState<MessageState | null>(null);
+  const [unlock, setUnlock] = useState<
+    | {
+        value: string;
+        error: string | null;
+        hasVault: boolean;
+        actionFocus: number; // 0 = cancel/quit, 1 = submit
+        focusArea: "input" | "actions";
+      }
+    | null
+  >(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
-  const [filter, setFilter] = useState<FilterState | null>(null);
-  const [showHelp, setShowHelp] = useState(false);
-  const [palette, setPalette] = useState<PaletteState | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
+  const [secretFilter, setSecretFilter] = useState("");
+  const [auditFilter, setAuditFilter] = useState("");
   const [selectedSecret, setSelectedSecret] = useState(0);
   const [selectedAudit, setSelectedAudit] = useState(0);
   const [auditDetail, setAuditDetail] = useState(false);
+  const [paletteQuery, setPaletteQuery] = useState("");
+  const [paletteIndex, setPaletteIndex] = useState(0);
   const zeroizeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const secretFilter = filter?.screen === "secrets" ? filter.value : "";
-  const auditFilter = filter?.screen === "audit" ? filter.value : "";
-  const selectedSecretRow = findSelectedSecret(snapshot, secretFilter, selectedSecret);
+  const filteredSecrets = useMemo(() => {
+    const rows = snapshot?.secrets ?? [];
+    const q = secretFilter.toLowerCase();
+    return q.length === 0 ? rows : rows.filter((s) => s.name.toLowerCase().includes(q));
+  }, [snapshot, secretFilter]);
+  const selectedSecretRow: SecretRow | null =
+    filteredSecrets[selectedSecret] ?? filteredSecrets[0] ?? null;
   const filteredAudit = useMemo(
     () => filterAuditEntriesForTui(snapshot?.audit ?? [], auditFilter),
     [snapshot, auditFilter],
   );
   const selectedAuditEntry = filteredAudit[selectedAudit] ?? filteredAudit[0] ?? null;
+
+  const showToast = (next: ToastState): void => {
+    setToast(next);
+    if (toastTimer.current !== null) {
+      props.services.clearTimeout(toastTimer.current);
+    }
+    toastTimer.current = props.services.setTimeout(() => {
+      setToast(null);
+    }, 2500);
+  };
 
   const refresh = async (current: TuiSession): Promise<void> => {
     const next = await buildSnapshot(props.deps, props.services, current);
@@ -630,7 +646,7 @@ export function TuiApp(props: AppProps): ReactElement {
       } catch (err) {
         if (!cancelled && err instanceof VaultLockedError) {
           const hasVault = await props.deps.fileExists(props.deps.globalVaultPath);
-          setUnlock({ value: "", error: null, hasVault });
+          setUnlock({ value: "", error: null, hasVault, actionFocus: 1, focusArea: "input" });
         }
       } finally {
         if (!cancelled) {
@@ -647,6 +663,9 @@ export function TuiApp(props: AppProps): ReactElement {
     if (zeroizeTimer.current !== null) {
       props.services.clearTimeout(zeroizeTimer.current);
     }
+    if (toastTimer.current !== null) {
+      props.services.clearTimeout(toastTimer.current);
+    }
     closeSession(session);
   }, [session]);
 
@@ -659,6 +678,22 @@ export function TuiApp(props: AppProps): ReactElement {
     });
     return () => watcher.close();
   }, [session]);
+
+  // Reset body focus/indices when switching screens
+  useEffect(() => {
+    setAuditDetail(false);
+    if (screen === "dashboard") {
+      // Dashboard has no interactive body for now
+      setRegion("body");
+    } else {
+      setRegion("body");
+    }
+    setToolbarFocus(0);
+  }, [screen]);
+
+  const screenIndex = TAB_LABELS.findIndex(
+    (label) => label.toLowerCase() === screen,
+  );
 
   const clearSecretValue = (): void => {
     setDialog((current) => {
@@ -700,83 +735,111 @@ export function TuiApp(props: AppProps): ReactElement {
     }, 2000);
   };
 
-  const saveSingleSecret = async (): Promise<void> => {
-    if (session === null || dialog === null || (dialog.kind !== "add" && dialog.kind !== "rotate")) {
+  const saveSingleSecret = async (current: AddDialogState): Promise<void> => {
+    if (session === null) {
       return;
     }
-    const target = await ensureScopeHandle(props.deps, session, dialog.scope);
-    const nextValue = dialog.value.replace(/[\r\n]+$/u, "");
-    const existingPolicy = target.handle.getRecord(dialog.name)?.policy;
-    target.handle.set(dialog.name, nextValue, existingPolicy);
+    if (current.name.trim().length === 0) {
+      setDialog({ ...current, error: "Name is required" });
+      return;
+    }
+    const target = await ensureScopeHandle(props.deps, session, current.scope);
+    const nextValue = current.value.replace(/[\r\n]+$/u, "");
+    const existingPolicy = target.handle.getRecord(current.name)?.policy;
+    target.handle.set(current.name, nextValue, existingPolicy);
     await target.handle.save();
     await refresh(session);
     clearSecretValue();
     setDialog(null);
-    setMessage({ kind: "info", text: `${dialog.kind === "add" ? "added" : "rotated"} ${dialog.name}` });
+    setRegion("toolbar");
+    showToast({
+      kind: "success",
+      text: `${current.kind === "add" ? "added" : "rotated"} ${current.name}`,
+    });
   };
 
-  const saveBulkPreview = async (): Promise<void> => {
-    if (session === null || dialog === null || dialog.kind !== "bulk" || dialog.preview === null) {
+  const saveBulkPreview = async (current: BulkDialogState): Promise<void> => {
+    if (session === null || current.preview === null) {
       return;
     }
-    const target = await ensureScopeHandle(props.deps, session, dialog.scope);
-    for (const entry of dialog.preview.added) {
-      target.handle.set(entry.name, entry.value.replace(/[\r\n]+$/u, ""), target.handle.getRecord(entry.name)?.policy);
+    const target = await ensureScopeHandle(props.deps, session, current.scope);
+    for (const entry of current.preview.added) {
+      target.handle.set(
+        entry.name,
+        entry.value.replace(/[\r\n]+$/u, ""),
+        target.handle.getRecord(entry.name)?.policy,
+      );
     }
     await target.handle.save();
     await refresh(session);
     clearBulkBuffer();
     setDialog(null);
-    setMessage({
-      kind: "info",
-      text: `${String(dialog.preview.added.length)} secrets added, ${String(dialog.preview.skipped.length)} skipped`,
+    setRegion("toolbar");
+    showToast({
+      kind: "success",
+      text: `${String(current.preview.added.length)} added, ${String(current.preview.skipped.length)} skipped`,
     });
   };
 
-  const savePolicyDraft = async (confirmed: boolean): Promise<void> => {
-    if (session === null || dialog === null || dialog.kind !== "policy" || selectedSecretRow === null) {
+  const savePolicyDraft = async (
+    current: PolicyDialogState,
+    confirmed: boolean,
+  ): Promise<void> => {
+    if (session === null) {
       return;
     }
-    const target = selectedSecretRow.scope === "global" ? session.global : session.project;
+    const target = current.targetScope === "global" ? session.global : session.project;
     if (target === null) {
+      setDialog({ ...current, error: "vault not available" });
       return;
     }
-    const draftPolicy = buildPolicyFromDialog(dialog);
+    const draftPolicy = buildPolicyFromDialog(current);
     if (draftPolicy instanceof Error) {
-      setMessage({ kind: "error", text: draftPolicy.message });
+      setDialog({ ...current, error: draftPolicy.message });
       return;
     }
-    const validated = validatePolicy(draftPolicy, { strictMode: target.handle.getStrictMode() });
+    const validated = validatePolicy(draftPolicy, {
+      strictMode: target.handle.getStrictMode(),
+    });
     if (validated instanceof Error) {
-      setMessage({ kind: "error", text: validated.message });
+      setDialog({ ...current, error: validated.message });
       return;
     }
     if (!confirmed && hasWildcardPolicy(validated)) {
-      setDialog({ ...dialog, awaitingConfirm: true });
+      setDialog({ ...current, awaitingConfirm: true, error: null });
       return;
     }
-    const value = getSecretValue(session, selectedSecretRow);
+    const secretRow = (snapshot?.secrets ?? []).find(
+      (s) => s.name === current.targetName && s.scope === current.targetScope,
+    );
+    if (secretRow === undefined) {
+      setDialog({ ...current, error: `secret not found: ${current.targetName}` });
+      return;
+    }
+    const value = getSecretValue(session, secretRow);
     if (value === undefined) {
-      setMessage({ kind: "error", text: `secret not found: ${selectedSecretRow.name}` });
+      setDialog({ ...current, error: `secret not found: ${current.targetName}` });
       return;
     }
-    target.handle.set(selectedSecretRow.name, value, validated);
+    target.handle.set(current.targetName, value, validated);
     await target.handle.save();
     await refresh(session);
     setDialog(null);
-    setMessage({ kind: "info", text: `policy updated for ${selectedSecretRow.name}` });
+    setRegion("toolbar");
+    showToast({ kind: "success", text: `policy updated for ${current.targetName}` });
   };
 
-  const deleteSecret = async (): Promise<void> => {
-    if (session === null || dialog === null || dialog.kind !== "delete") {
+  const deleteSecret = async (current: DeleteDialogState): Promise<void> => {
+    if (session === null) {
       return;
     }
-    const target = dialog.scope === "global" ? session.global : session.project;
-    target?.handle.remove(dialog.name);
+    const target = current.scope === "global" ? session.global : session.project;
+    target?.handle.remove(current.name);
     await target?.handle.save();
     await refresh(session);
     setDialog(null);
-    setMessage({ kind: "info", text: `deleted ${dialog.name}` });
+    setRegion("toolbar");
+    showToast({ kind: "success", text: `deleted ${current.name}` });
   };
 
   const tryUnlock = async (): Promise<void> => {
@@ -795,256 +858,873 @@ export function TuiApp(props: AppProps): ReactElement {
     }
   };
 
+  const doPaste = async (onText: (text: string) => void): Promise<void> => {
+    try {
+      const text = await props.services.clipboard.readText();
+      onText(text);
+      showToast({
+        kind: "success",
+        text: `pasted ${String(text.length)} chars`,
+      });
+    } catch {
+      showToast({ kind: "error", text: "clipboard read failed" });
+    }
+  };
+
+  const doCopy = async (text: string, label: string): Promise<void> => {
+    try {
+      await props.services.clipboard.writeText(text);
+      showToast({ kind: "success", text: `copied ${label}` });
+    } catch {
+      showToast({ kind: "error", text: "clipboard write failed" });
+    }
+  };
+
+  // -------- Toolbars for each screen --------
+  const secretsToolbar: readonly ToolbarButton[] = [
+    { label: "+ Add secret" },
+    { label: "↻ Rotate", disabled: selectedSecretRow === null },
+    { label: "− Delete", variant: "danger", disabled: selectedSecretRow === null },
+    { label: "⚙ Policy", disabled: selectedSecretRow === null },
+    { label: "⎘ Copy name", disabled: selectedSecretRow === null },
+    { label: "⤒ Bulk import" },
+    { label: "⧉ Filter" },
+  ];
+  const auditToolbar: readonly ToolbarButton[] = auditDetail
+    ? [
+        { label: "⎘ Copy detail", disabled: selectedAuditEntry === null },
+        { label: "← Back" },
+      ]
+    : [
+        { label: "⧉ Filter" },
+        { label: "⎘ Copy detail", disabled: selectedAuditEntry === null },
+      ];
+  const policiesToolbar: readonly ToolbarButton[] = [
+    { label: "⚙ Edit policy", disabled: selectedSecretRow === null },
+    { label: "⎘ Copy policy JSON", disabled: selectedSecretRow === null },
+  ];
+
+  const currentToolbar: readonly ToolbarButton[] =
+    screen === "secrets"
+      ? secretsToolbar
+      : screen === "audit"
+        ? auditToolbar
+        : screen === "policies"
+          ? policiesToolbar
+          : [];
+
+  const activateSecretsToolbar = (): void => {
+    const btn = secretsToolbar[toolbarFocus];
+    if (btn === undefined || btn.disabled === true) {
+      return;
+    }
+    switch (btn.label) {
+      case "+ Add secret":
+        setDialog({
+          kind: "add",
+          scope: selectedSecretRow?.scope ?? "global",
+          name: "",
+          value: "",
+          focus: { kind: "field", index: 0, onPaste: false },
+          error: null,
+        });
+        setRegion("dialog");
+        return;
+      case "↻ Rotate":
+        if (selectedSecretRow !== null) {
+          setDialog({
+            kind: "rotate",
+            scope: selectedSecretRow.scope,
+            name: selectedSecretRow.name,
+            value: "",
+            focus: { kind: "field", index: 1, onPaste: false },
+            error: null,
+          });
+          setRegion("dialog");
+        }
+        return;
+      case "− Delete":
+        if (selectedSecretRow !== null) {
+          setDialog({
+            kind: "delete",
+            name: selectedSecretRow.name,
+            scope: selectedSecretRow.scope,
+            focus: { kind: "actions", index: 1 },
+          });
+          setRegion("dialog");
+        }
+        return;
+      case "⚙ Policy":
+        if (selectedSecretRow !== null) {
+          setDialog(
+            policyToDialogState(
+              getPolicyForSecret(session as TuiSession, selectedSecretRow),
+              selectedSecretRow.name,
+              selectedSecretRow.scope,
+            ),
+          );
+          setRegion("dialog");
+        }
+        return;
+      case "⎘ Copy name":
+        if (selectedSecretRow !== null) {
+          void doCopy(selectedSecretRow.name, selectedSecretRow.name);
+        }
+        return;
+      case "⤒ Bulk import":
+        setDialog({
+          kind: "bulk",
+          buffer: "",
+          preview: null,
+          scope: selectedSecretRow?.scope ?? "global",
+          focus: { kind: "actions", index: 1 },
+          error: null,
+        });
+        setRegion("dialog");
+        return;
+      case "⧉ Filter":
+        setDialog({
+          kind: "filter",
+          target: "secrets",
+          value: secretFilter,
+          focus: { kind: "field", index: 0, onPaste: false },
+        });
+        setRegion("dialog");
+        return;
+      default:
+        return;
+    }
+  };
+
+  const activateAuditToolbar = (): void => {
+    const btn = auditToolbar[toolbarFocus];
+    if (btn === undefined || btn.disabled === true) {
+      return;
+    }
+    switch (btn.label) {
+      case "⧉ Filter":
+        setDialog({
+          kind: "filter",
+          target: "audit",
+          value: auditFilter,
+          focus: { kind: "field", index: 0, onPaste: false },
+        });
+        setRegion("dialog");
+        return;
+      case "⎘ Copy detail":
+        if (selectedAuditEntry !== null) {
+          const model = buildAuditDetailModelForTui(selectedAuditEntry);
+          void doCopy(formatAuditDetail(model, { tty: false }), "audit detail");
+        }
+        return;
+      case "← Back":
+        setAuditDetail(false);
+        setRegion("body");
+        return;
+      default:
+        return;
+    }
+  };
+
+  const activatePoliciesToolbar = (): void => {
+    const btn = policiesToolbar[toolbarFocus];
+    if (btn === undefined || btn.disabled === true || selectedSecretRow === null) {
+      return;
+    }
+    switch (btn.label) {
+      case "⚙ Edit policy":
+        setDialog(
+          policyToDialogState(
+            getPolicyForSecret(session as TuiSession, selectedSecretRow),
+            selectedSecretRow.name,
+            selectedSecretRow.scope,
+          ),
+        );
+        setRegion("dialog");
+        return;
+      case "⎘ Copy policy JSON": {
+        const policy = getPolicyForSecret(session as TuiSession, selectedSecretRow);
+        void doCopy(
+          JSON.stringify(policy ?? {}, null, 2),
+          `policy for ${selectedSecretRow.name}`,
+        );
+        return;
+      }
+      default:
+        return;
+    }
+  };
+
+  const activateToolbar = (): void => {
+    if (screen === "secrets") {
+      activateSecretsToolbar();
+    } else if (screen === "audit") {
+      activateAuditToolbar();
+    } else if (screen === "policies") {
+      activatePoliciesToolbar();
+    }
+  };
+
+  // -------- Command palette --------
+  const paletteCommands: readonly PaletteCommand[] = [
+    { id: "goto:dashboard", label: "Go to Dashboard" },
+    { id: "goto:secrets", label: "Go to Secrets" },
+    { id: "goto:audit", label: "Go to Audit" },
+    { id: "goto:policies", label: "Go to Policies" },
+    { id: "add:secret", label: "Add secret" },
+    { id: "bulk:import", label: "Bulk import secrets" },
+    { id: "rotate:secret", label: "Rotate selected secret" },
+    { id: "delete:secret", label: "Delete selected secret" },
+    { id: "edit:policy", label: "Edit policy for selected secret" },
+    { id: "copy:name", label: "Copy selected secret name" },
+    { id: "filter:secrets", label: "Filter secrets" },
+    { id: "filter:audit", label: "Filter audit" },
+    { id: "quit", label: "Quit" },
+  ];
+  const filteredPaletteCommands = filterCommands(paletteCommands, paletteQuery);
+
+  const runPaletteCommand = (id: string): void => {
+    setRegion("body");
+    setPaletteQuery("");
+    setPaletteIndex(0);
+    switch (id) {
+      case "goto:dashboard":
+        setScreen("dashboard");
+        return;
+      case "goto:secrets":
+        setScreen("secrets");
+        return;
+      case "goto:audit":
+        setScreen("audit");
+        return;
+      case "goto:policies":
+        setScreen("policies");
+        return;
+      case "add:secret":
+        setScreen("secrets");
+        setDialog({
+          kind: "add",
+          scope: selectedSecretRow?.scope ?? "global",
+          name: "",
+          value: "",
+          focus: { kind: "field", index: 0, onPaste: false },
+          error: null,
+        });
+        setRegion("dialog");
+        return;
+      case "bulk:import":
+        setScreen("secrets");
+        setDialog({
+          kind: "bulk",
+          buffer: "",
+          preview: null,
+          scope: selectedSecretRow?.scope ?? "global",
+          focus: { kind: "actions", index: 1 },
+          error: null,
+        });
+        setRegion("dialog");
+        return;
+      case "rotate:secret":
+        if (selectedSecretRow !== null) {
+          setScreen("secrets");
+          setDialog({
+            kind: "rotate",
+            scope: selectedSecretRow.scope,
+            name: selectedSecretRow.name,
+            value: "",
+            focus: { kind: "field", index: 1, onPaste: false },
+            error: null,
+          });
+          setRegion("dialog");
+        }
+        return;
+      case "delete:secret":
+        if (selectedSecretRow !== null) {
+          setScreen("secrets");
+          setDialog({
+            kind: "delete",
+            name: selectedSecretRow.name,
+            scope: selectedSecretRow.scope,
+            focus: { kind: "actions", index: 1 },
+          });
+          setRegion("dialog");
+        }
+        return;
+      case "edit:policy":
+        if (selectedSecretRow !== null) {
+          setScreen("policies");
+          setDialog(
+            policyToDialogState(
+              getPolicyForSecret(session as TuiSession, selectedSecretRow),
+              selectedSecretRow.name,
+              selectedSecretRow.scope,
+            ),
+          );
+          setRegion("dialog");
+        }
+        return;
+      case "copy:name":
+        if (selectedSecretRow !== null) {
+          void doCopy(selectedSecretRow.name, selectedSecretRow.name);
+        }
+        return;
+      case "filter:secrets":
+        setScreen("secrets");
+        setDialog({
+          kind: "filter",
+          target: "secrets",
+          value: secretFilter,
+          focus: { kind: "field", index: 0, onPaste: false },
+        });
+        setRegion("dialog");
+        return;
+      case "filter:audit":
+        setScreen("audit");
+        setDialog({
+          kind: "filter",
+          target: "audit",
+          value: auditFilter,
+          focus: { kind: "field", index: 0, onPaste: false },
+        });
+        setRegion("dialog");
+        return;
+      case "quit":
+        exit();
+        return;
+      default:
+        return;
+    }
+  };
+
+  // -------- Dialog field helpers --------
+  const addDialogFields = (current: AddDialogState): readonly FieldSpec[] => {
+    const f: FieldSpec[] = [];
+    if (current.kind === "add") {
+      f.push({ id: "name", hasPaste: true });
+    }
+    f.push({ id: "value", hasPaste: true });
+    return f;
+  };
+  const policyDialogFields: readonly FieldSpec[] = [
+    { id: "hosts", hasPaste: false },
+    { id: "commands", hasPaste: false },
+    { id: "env", hasPaste: false },
+    { id: "requests", hasPaste: false },
+    { id: "window", hasPaste: false },
+  ];
+
+  // ============ KEYBOARD ROUTER ============
   useInput((input, key) => {
     if (key.ctrl === true && input === "c") {
       exit();
       return;
     }
-    if (showHelp) {
-      if (key.escape || input === "?" || input === "q") {
-        setShowHelp(false);
-      }
-      return;
-    }
-    if (palette !== null) {
-      if (input === "j" || key.downArrow) {
-        setPalette({ selected: Math.min(3, palette.selected + 1) });
-        return;
-      }
-      if (input === "k" || key.upArrow) {
-        setPalette({ selected: Math.max(0, palette.selected - 1) });
-        return;
-      }
-      if (key.return) {
-        setScreen((["dashboard", "secrets", "audit", "policies"] as const)[palette.selected] ?? "dashboard");
-        setPalette(null);
-        return;
-      }
-      if (key.escape || input === ":") {
-        setPalette(null);
-      }
-      return;
-    }
+
+    // Unlock screen
     if (unlock !== null) {
-      if (key.return) {
-        void tryUnlock();
-      }
-      return;
-    }
-    if (filter !== null) {
-      if (key.escape) {
-        setFilter(null);
-      }
-      return;
-    }
-    if (dialog?.kind === "delete") {
-      if (input === "y") {
-        void deleteSecret();
-      }
-      if (input === "n" || key.escape) {
-        setDialog(null);
-      }
-      return;
-    }
-    if (dialog?.kind === "policy" && dialog.awaitingConfirm) {
-      if (input === "y") {
-        void savePolicyDraft(true);
-      }
-      if (input === "n" || key.escape) {
-        setDialog({ ...dialog, awaitingConfirm: false });
-      }
-      return;
-    }
-    if (dialog?.kind === "bulk") {
-      if (dialog.preview !== null) {
-        if (key.tab) {
-          setDialog({ ...dialog, scope: dialog.scope === "global" ? "project" : "global" });
+      if (unlock.focusArea === "input") {
+        if (key.tab || key.downArrow) {
+          setUnlock({ ...unlock, focusArea: "actions" });
           return;
         }
         if (key.return) {
-          void saveBulkPreview();
-          return;
-        }
-      } else {
-        if (key.return) {
-          setDialog({ ...dialog, preview: parseBulkSecretInput(dialog.buffer) });
-          return;
-        }
-        if (input === "p") {
-          void props.services.clipboard.readText().then((text) => {
-            setDialog({ ...dialog, buffer: text, preview: null });
-          });
-          return;
-        }
-        if (key.backspace || key.delete) {
-          setDialog({ ...dialog, buffer: dialog.buffer.slice(0, -1) });
+          void tryUnlock();
           return;
         }
         if (key.escape) {
-          clearBulkBuffer();
-          setDialog(null);
-          return;
+          exit();
         }
-        if (input.length > 0) {
-          setDialog({ ...dialog, buffer: `${dialog.buffer}${input}` });
-          return;
-        }
-      }
-      if (key.escape) {
-        clearBulkBuffer();
-        setDialog(null);
-      }
-      return;
-    }
-    if (dialog?.kind === "add" || dialog?.kind === "rotate") {
-      if (key.tab) {
-        setDialog({ ...dialog, focus: dialog.focus === "name" ? "value" : "name" });
         return;
       }
-      if (key.return && dialog.focus === "name") {
-        setDialog({ ...dialog, focus: "value" });
+      // actions
+      if (key.tab || key.upArrow) {
+        setUnlock({ ...unlock, focusArea: "input" });
         return;
       }
-      if (key.return && dialog.focus === "value") {
-        void saveSingleSecret();
+      if (key.leftArrow) {
+        setUnlock({ ...unlock, actionFocus: Math.max(0, unlock.actionFocus - 1) });
         return;
       }
-      if (input === "p" && dialog.focus === "value") {
-        void props.services.clipboard.readText().then((text) => {
-          setDialog({ ...dialog, value: text.replace(/[\r\n]+$/u, "") });
-        });
-        return;
-      }
-      if (key.escape) {
-        clearSecretValue();
-        setDialog(null);
-      }
-      return;
-    }
-    if (dialog?.kind === "policy") {
-      if (key.tab) {
-        const order: PolicyDialogState["focus"][] = ["hosts", "commands", "env", "requests", "window"];
-        const nextIndex = (order.indexOf(dialog.focus) + 1) % order.length;
-        setDialog({ ...dialog, focus: order[nextIndex] ?? "hosts" });
+      if (key.rightArrow) {
+        setUnlock({ ...unlock, actionFocus: Math.min(1, unlock.actionFocus + 1) });
         return;
       }
       if (key.return) {
-        void savePolicyDraft(false);
+        if (unlock.actionFocus === 0) {
+          exit();
+          return;
+        }
+        void tryUnlock();
         return;
       }
       if (key.escape) {
-        setDialog(null);
-      }
-      return;
-    }
-    if (auditDetail) {
-      if (input === "j" || key.downArrow) {
-        setSelectedAudit((current) => Math.min(filteredAudit.length - 1, current + 1));
-        return;
-      }
-      if (input === "k" || key.upArrow) {
-        setSelectedAudit((current) => Math.max(0, current - 1));
-        return;
-      }
-      if (input === "o" && selectedAuditEntry !== null) {
-        void props.services.detectUiUrl().then((url) => {
-          if (url === null) {
-            setMessage({ kind: "info", text: "local UI not detected; start `secretproxy ui`" });
-            return;
-          }
-          void props.services.openExternal(`${url}/#/audit/${selectedAuditEntry.request_id}`);
-        });
-        return;
-      }
-      if (key.escape) {
-        setAuditDetail(false);
+        exit();
       }
       return;
     }
 
-    if (input === "q") {
-      exit();
+    // Ctrl+K opens palette (global)
+    if (key.ctrl === true && input === "k" && region !== "palette" && region !== "dialog") {
+      setPaletteQuery("");
+      setPaletteIndex(0);
+      setRegion("palette");
       return;
     }
-    if (input === "?") {
-      setShowHelp(true);
+
+    // PALETTE
+    if (region === "palette") {
+      if (key.escape) {
+        setRegion("body");
+        setPaletteQuery("");
+        setPaletteIndex(0);
+        return;
+      }
+      if (key.return) {
+        const cmd = filteredPaletteCommands[paletteIndex];
+        if (cmd !== undefined) {
+          runPaletteCommand(cmd.id);
+        }
+        return;
+      }
+      if (key.upArrow) {
+        setPaletteIndex((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (key.downArrow) {
+        setPaletteIndex((i) => Math.min(filteredPaletteCommands.length - 1, i + 1));
+        return;
+      }
+      // TextInput owns the rest (filters via its focus flag)
       return;
     }
-    if (input === ":") {
-      setPalette({ selected: 0 });
-      return;
-    }
-    if (input === "s") {
-      setScreen("secrets");
-      return;
-    }
-    if (input === "u") {
-      setScreen("audit");
-      return;
-    }
-    if (input === "p") {
-      setScreen("policies");
-      return;
-    }
-    if (key.escape && screen !== "dashboard") {
-      setScreen("dashboard");
-      setAuditDetail(false);
-      return;
-    }
-    if (input === "/") {
-      if (screen === "secrets") {
-        setFilter({ screen: "secrets", value: secretFilter });
-      } else if (screen === "audit") {
-        setFilter({ screen: "audit", value: auditFilter });
-      } else {
-        setScreen("dashboard");
+
+    // DIALOG
+    if (region === "dialog" && dialog !== null) {
+      // Esc always cancels
+      if (key.escape) {
+        if (dialog.kind === "add" || dialog.kind === "rotate") {
+          clearSecretValue();
+        } else if (dialog.kind === "bulk") {
+          clearBulkBuffer();
+        } else if (dialog.kind === "policy" && dialog.awaitingConfirm) {
+          setDialog({ ...dialog, awaitingConfirm: false });
+          return;
+        }
+        setDialog(null);
+        setRegion("toolbar");
+        return;
+      }
+
+      // Policy wildcard confirmation gate
+      if (dialog.kind === "policy" && dialog.awaitingConfirm) {
+        // actions row: Cancel, Keep editing, Save anyway
+        if (key.leftArrow) {
+          const idx = dialog.focus.kind === "actions" ? dialog.focus.index : 0;
+          setDialog({ ...dialog, focus: { kind: "actions", index: Math.max(0, idx - 1) } });
+          return;
+        }
+        if (key.rightArrow) {
+          const idx = dialog.focus.kind === "actions" ? dialog.focus.index : 0;
+          setDialog({ ...dialog, focus: { kind: "actions", index: Math.min(2, idx + 1) } });
+          return;
+        }
+        if (key.return) {
+          const idx = dialog.focus.kind === "actions" ? dialog.focus.index : 0;
+          if (idx === 0) {
+            // cancel whole thing
+            setDialog(null);
+            setRegion("toolbar");
+          } else if (idx === 1) {
+            // keep editing → drop confirm flag
+            setDialog({ ...dialog, awaitingConfirm: false });
+          } else {
+            // save anyway
+            void savePolicyDraft(dialog, true);
+          }
+        }
+        return;
+      }
+
+      // Add / Rotate dialog
+      if (dialog.kind === "add" || dialog.kind === "rotate") {
+        const fields = addDialogFields(dialog as AddDialogState);
+        const actionCount = 2; // Cancel, Save
+        if (key.tab) {
+          setDialog({
+            ...dialog,
+            focus: nextDialogFocus(dialog.focus, fields, actionCount),
+          });
+          return;
+        }
+        if (dialog.focus.kind === "field") {
+          const field = fields[dialog.focus.index];
+          if (field === undefined) {
+            return;
+          }
+          if (dialog.focus.onPaste) {
+            if (key.return) {
+              const fieldId = field.id;
+              void doPaste((text) => {
+                setDialog((prev) => {
+                  if (prev === null || (prev.kind !== "add" && prev.kind !== "rotate")) {
+                    return prev;
+                  }
+                  if (fieldId === "name") {
+                    return { ...prev, name: text.replace(/[\r\n]+$/u, "") };
+                  }
+                  return { ...prev, value: text.replace(/[\r\n]+$/u, "") };
+                });
+              });
+            }
+            if (key.leftArrow) {
+              setDialog({
+                ...dialog,
+                focus: { kind: "field", index: dialog.focus.index, onPaste: false },
+              });
+            }
+            return;
+          }
+          // field input, Enter submits full dialog (go to Save action) or advances
+          if (key.return) {
+            // advance to next field; if no next, trigger save
+            const next = nextDialogFocus(dialog.focus, fields, actionCount);
+            if (next.kind === "actions") {
+              setDialog({ ...dialog, focus: { kind: "actions", index: 1 } }); // focus Save
+            } else {
+              setDialog({ ...dialog, focus: next });
+            }
+            return;
+          }
+          return;
+        }
+        // actions row
+        if (key.leftArrow) {
+          setDialog({
+            ...dialog,
+            focus: { kind: "actions", index: Math.max(0, dialog.focus.index - 1) },
+          });
+          return;
+        }
+        if (key.rightArrow) {
+          setDialog({
+            ...dialog,
+            focus: { kind: "actions", index: Math.min(actionCount - 1, dialog.focus.index + 1) },
+          });
+          return;
+        }
+        if (key.return) {
+          if (dialog.focus.index === 0) {
+            clearSecretValue();
+            setDialog(null);
+            setRegion("toolbar");
+            return;
+          }
+          void saveSingleSecret(dialog);
+        }
+        return;
+      }
+
+      // Bulk dialog
+      if (dialog.kind === "bulk") {
+        const preview = dialog.preview;
+        const actionCount = 2;
+        if (key.tab) {
+          setDialog({
+            ...dialog,
+            focus: { kind: "actions", index: (dialog.focus.kind === "actions" ? (dialog.focus.index + 1) % actionCount : 0) },
+          });
+          return;
+        }
+        if (key.leftArrow && dialog.focus.kind === "actions") {
+          setDialog({
+            ...dialog,
+            focus: { kind: "actions", index: Math.max(0, dialog.focus.index - 1) },
+          });
+          return;
+        }
+        if (key.rightArrow && dialog.focus.kind === "actions") {
+          setDialog({
+            ...dialog,
+            focus: { kind: "actions", index: Math.min(actionCount - 1, dialog.focus.index + 1) },
+          });
+          return;
+        }
+        // Scope toggle with up/down when focused on actions
+        if ((key.upArrow || key.downArrow) && dialog.focus.kind === "actions") {
+          setDialog({
+            ...dialog,
+            scope: dialog.scope === "global" ? "project" : "global",
+          });
+          return;
+        }
+        if (key.return) {
+          if (dialog.focus.kind !== "actions") {
+            return;
+          }
+          if (dialog.focus.index === 0) {
+            // cancel
+            clearBulkBuffer();
+            setDialog(null);
+            setRegion("toolbar");
+            return;
+          }
+          // action index 1: paste/preview/import
+          if (preview === null && dialog.buffer.length === 0) {
+            // Paste
+            void doPaste((text) => {
+              setDialog((prev) => {
+                if (prev === null || prev.kind !== "bulk") {
+                  return prev;
+                }
+                return { ...prev, buffer: text, preview: null };
+              });
+            });
+            return;
+          }
+          if (preview === null && dialog.buffer.length > 0) {
+            setDialog({ ...dialog, preview: parseBulkSecretInput(dialog.buffer) });
+            return;
+          }
+          // preview !== null → import
+          void saveBulkPreview(dialog);
+        }
+        return;
+      }
+
+      // Delete dialog
+      if (dialog.kind === "delete") {
+        const actionCount = 2;
+        if (key.leftArrow) {
+          setDialog({
+            ...dialog,
+            focus: { kind: "actions", index: Math.max(0, dialog.focus.index - 1) },
+          });
+          return;
+        }
+        if (key.rightArrow) {
+          setDialog({
+            ...dialog,
+            focus: { kind: "actions", index: Math.min(actionCount - 1, dialog.focus.index + 1) },
+          });
+          return;
+        }
+        if (key.return) {
+          if (dialog.focus.index === 0) {
+            setDialog(null);
+            setRegion("toolbar");
+            return;
+          }
+          void deleteSecret(dialog);
+        }
+        return;
+      }
+
+      // Policy dialog (non-confirm)
+      if (dialog.kind === "policy") {
+        const fields = policyDialogFields;
+        const actionCount = 2;
+        if (key.tab) {
+          setDialog({
+            ...dialog,
+            focus: nextDialogFocus(dialog.focus, fields, actionCount),
+          });
+          return;
+        }
+        if (dialog.focus.kind === "actions") {
+          if (key.leftArrow) {
+            setDialog({
+              ...dialog,
+              focus: { kind: "actions", index: Math.max(0, dialog.focus.index - 1) },
+            });
+            return;
+          }
+          if (key.rightArrow) {
+            setDialog({
+              ...dialog,
+              focus: { kind: "actions", index: Math.min(actionCount - 1, dialog.focus.index + 1) },
+            });
+            return;
+          }
+          if (key.return) {
+            if (dialog.focus.index === 0) {
+              setDialog(null);
+              setRegion("toolbar");
+              return;
+            }
+            void savePolicyDraft(dialog, false);
+          }
+          return;
+        }
+        // field focus — Enter submits
+        if (key.return) {
+          void savePolicyDraft(dialog, false);
+        }
+        return;
+      }
+
+      // Filter dialog
+      if (dialog.kind === "filter") {
+        const actionCount = 2;
+        if (key.tab) {
+          setDialog({
+            ...dialog,
+            focus: nextDialogFocus(dialog.focus, [{ id: "q", hasPaste: false }], actionCount),
+          });
+          return;
+        }
+        if (dialog.focus.kind === "actions") {
+          if (key.leftArrow) {
+            setDialog({
+              ...dialog,
+              focus: { kind: "actions", index: Math.max(0, dialog.focus.index - 1) },
+            });
+            return;
+          }
+          if (key.rightArrow) {
+            setDialog({
+              ...dialog,
+              focus: { kind: "actions", index: Math.min(actionCount - 1, dialog.focus.index + 1) },
+            });
+            return;
+          }
+          if (key.return) {
+            if (dialog.focus.index === 0) {
+              setDialog(null);
+              setRegion("toolbar");
+              return;
+            }
+            if (dialog.target === "secrets") {
+              setSecretFilter(dialog.value);
+            } else {
+              setAuditFilter(dialog.value);
+            }
+            setDialog(null);
+            setRegion("toolbar");
+          }
+          return;
+        }
+        if (key.return) {
+          if (dialog.target === "secrets") {
+            setSecretFilter(dialog.value);
+          } else {
+            setAuditFilter(dialog.value);
+          }
+          setDialog(null);
+          setRegion("toolbar");
+        }
+        return;
       }
       return;
     }
+
+    // MAIN UI routing: tabs / body / toolbar
+
+    // Esc: escalate one region level up; if at tabs, no-op.
+    if (key.escape) {
+      if (auditDetail) {
+        setAuditDetail(false);
+        setRegion("body");
+        return;
+      }
+      if (region === "toolbar") {
+        setRegion("body");
+        return;
+      }
+      if (region === "body") {
+        setRegion("tabs");
+        setTabFocus(Math.max(0, screenIndex));
+        return;
+      }
+      return;
+    }
+
+    // Tab: cycle regions
+    if (key.tab) {
+      if (region === "tabs") {
+        setRegion("body");
+        return;
+      }
+      if (region === "body") {
+        if (currentToolbar.length > 0) {
+          setRegion("toolbar");
+          setToolbarFocus(0);
+        } else {
+          setRegion("tabs");
+          setTabFocus(Math.max(0, screenIndex));
+        }
+        return;
+      }
+      // toolbar → tabs
+      setRegion("tabs");
+      setTabFocus(Math.max(0, screenIndex));
+      return;
+    }
+
+    // TABS region
+    if (region === "tabs") {
+      if (key.leftArrow) {
+        setTabFocus((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (key.rightArrow) {
+        setTabFocus((i) => Math.min(TAB_LABELS.length - 1, i + 1));
+        return;
+      }
+      if (key.return) {
+        const targetLabel = TAB_LABELS[tabFocus] ?? "Dashboard";
+        const next = targetLabel.toLowerCase() as Screen;
+        setScreen(next);
+        setRegion("body");
+      }
+      return;
+    }
+
+    // TOOLBAR region
+    if (region === "toolbar") {
+      if (key.leftArrow) {
+        setToolbarFocus((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (key.rightArrow) {
+        setToolbarFocus((i) => Math.min(currentToolbar.length - 1, i + 1));
+        return;
+      }
+      if (key.return) {
+        activateToolbar();
+      }
+      return;
+    }
+
+    // BODY region (per-screen)
     if (screen === "secrets") {
-      if (input === "j" || key.downArrow) {
-        setSelectedSecret((current) => current + 1);
+      if (key.upArrow) {
+        setSelectedSecret((i) => Math.max(0, i - 1));
         return;
       }
-      if (input === "k" || key.upArrow) {
-        setSelectedSecret((current) => Math.max(0, current - 1));
+      if (key.downArrow) {
+        setSelectedSecret((i) => Math.min(Math.max(0, filteredSecrets.length - 1), i + 1));
         return;
-      }
-      if (input === "a") {
-        setDialog({ kind: "add", scope: selectedSecretRow?.scope ?? "global", name: "", value: "", focus: "name" });
-        return;
-      }
-      if (input === "A") {
-        setDialog({ kind: "bulk", buffer: "", preview: null, scope: selectedSecretRow?.scope ?? "global" });
-        return;
-      }
-      if (input === "r" && selectedSecretRow !== null) {
-        setDialog({ kind: "rotate", scope: selectedSecretRow.scope, name: selectedSecretRow.name, value: "", focus: "value" });
-        return;
-      }
-      if (input === "d" && selectedSecretRow !== null) {
-        setDialog({ kind: "delete", name: selectedSecretRow.name, scope: selectedSecretRow.scope });
-        return;
-      }
-      if (input === "e" && selectedSecretRow !== null) {
-        setScreen("policies");
-        setDialog(policyToDialogState(getPolicyForSecret(session as TuiSession, selectedSecretRow)));
-        return;
-      }
-      if (input === "c" && selectedSecretRow !== null) {
-        void props.services.clipboard.writeText(selectedSecretRow.name).then(() => {
-          setMessage({ kind: "info", text: `copied ${selectedSecretRow.name}` });
-        });
       }
       return;
     }
     if (screen === "audit") {
-      if (input === "j" || key.downArrow) {
-        setSelectedAudit((current) => Math.min(filteredAudit.length - 1, current + 1));
+      if (auditDetail) {
+        if (key.upArrow) {
+          setSelectedAudit((i) => Math.max(0, i - 1));
+          return;
+        }
+        if (key.downArrow) {
+          setSelectedAudit((i) => Math.min(filteredAudit.length - 1, i + 1));
+          return;
+        }
         return;
       }
-      if (input === "k" || key.upArrow) {
-        setSelectedAudit((current) => Math.max(0, current - 1));
+      if (key.upArrow) {
+        setSelectedAudit((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (key.downArrow) {
+        setSelectedAudit((i) => Math.min(Math.max(0, filteredAudit.length - 1), i + 1));
         return;
       }
       if (key.return && selectedAuditEntry !== null) {
@@ -1053,58 +1733,139 @@ export function TuiApp(props: AppProps): ReactElement {
       return;
     }
     if (screen === "policies") {
-      if (input === "j" || key.downArrow) {
-        setSelectedSecret((current) => current + 1);
+      if (key.upArrow) {
+        setSelectedSecret((i) => Math.max(0, i - 1));
         return;
       }
-      if (input === "k" || key.upArrow) {
-        setSelectedSecret((current) => Math.max(0, current - 1));
-        return;
-      }
-      if (input === "e" && selectedSecretRow !== null) {
-        setDialog(policyToDialogState(getPolicyForSecret(session as TuiSession, selectedSecretRow)));
+      if (key.downArrow) {
+        setSelectedSecret((i) => Math.min(Math.max(0, filteredSecrets.length - 1), i + 1));
       }
     }
+    // dashboard body: no-op
   });
 
+  // ============ RENDER ============
   if (loading) {
     return <Text color={theme.dim}>Loading...</Text>;
   }
+
   if (unlock !== null) {
     const isNew = !unlock.hasVault;
     return (
       <Box justifyContent="center" alignItems="center" flexDirection="column">
-        <Box borderStyle="round" flexDirection="column" padding={2} width={60}>
-          <Text color={theme.accent} bold>{isNew ? "Set Up Agentic Vault" : "Unlock Agentic Vault"}</Text>
+        <Box
+          borderStyle="round"
+          borderColor={theme.border}
+          flexDirection="column"
+          padding={2}
+          width={60}
+        >
+          <Text color={theme.accent} bold>
+            {isNew ? "Set up Agentic Vault" : "Unlock Agentic Vault"}
+          </Text>
           <Text color={theme.dim}>
             {isNew
               ? "No vault found. Enter a new master password to create one (min 12 characters)."
               : "Enter your master password to continue."}
           </Text>
-          <TextInput
-            value={unlock.value}
-            mask="*"
-            onChange={(value) => setUnlock({ ...unlock, value })}
-            onSubmit={() => {
-              void tryUnlock();
-            }}
-          />
-          {unlock.error !== null ? <Text color="red">{unlock.error}</Text> : null}
+          <Box marginTop={1} flexDirection="column">
+            <Text color={unlock.focusArea === "input" ? theme.accent : theme.dim}>
+              Master password
+            </Text>
+            <TextInput
+              focus={unlock.focusArea === "input"}
+              value={unlock.value}
+              mask="*"
+              onChange={(value) => setUnlock({ ...unlock, value })}
+            />
+          </Box>
+          {unlock.error !== null ? (
+            <Box marginTop={1}>
+              <Text color={theme.danger}>{unlock.error}</Text>
+            </Box>
+          ) : null}
+          <Box marginTop={1}>
+            <Button
+              label={isNew ? "Cancel" : "Quit"}
+              focused={unlock.focusArea === "actions" && unlock.actionFocus === 0}
+            />
+            <Text> </Text>
+            <Button
+              label={isNew ? "Create vault" : "Unlock"}
+              focused={unlock.focusArea === "actions" && unlock.actionFocus === 1}
+            />
+          </Box>
         </Box>
+        <HelpBar hints={[
+          { key: "Tab", label: "switch field" },
+          { key: "←→", label: "buttons" },
+          { key: "Enter", label: "activate" },
+          { key: "Esc", label: "quit" },
+        ]} />
       </Box>
     );
   }
 
-  const model = selectedAuditEntry !== null ? buildAuditDetailModelForTui(selectedAuditEntry) : null;
-  const selectedPolicy = selectedSecretRow !== null ? getPolicyForSecret(session as TuiSession, selectedSecretRow) : null;
+  const selectedPolicy =
+    selectedSecretRow !== null && session !== null
+      ? getPolicyForSecret(session, selectedSecretRow)
+      : null;
   const policyView = formatPolicyForScreen(selectedPolicy);
-  const selectedPolicyHandle = selectedSecretRow?.scope === "global" ? session?.global?.handle : session?.project?.handle;
-  const secretRows = snapshot?.secrets.filter((secret) => secret.name.toLowerCase().includes(secretFilter.toLowerCase())) ?? [];
+  const selectedPolicyHandle =
+    selectedSecretRow?.scope === "global"
+      ? session?.global?.handle
+      : session?.project?.handle;
+  const strictMode = selectedPolicyHandle?.getStrictMode() === true;
+
+  const hints: readonly HelpHint[] = (() => {
+    if (region === "palette") {
+      return [
+        { key: "↑↓", label: "move" },
+        { key: "Enter", label: "run" },
+        { key: "Esc", label: "close" },
+      ];
+    }
+    if (region === "dialog") {
+      return [
+        { key: "Tab", label: "next field" },
+        { key: "←→", label: "buttons" },
+        { key: "Enter", label: "activate" },
+        { key: "Esc", label: "cancel" },
+      ];
+    }
+    if (region === "tabs") {
+      return [
+        { key: "←→", label: "tab" },
+        { key: "Enter", label: "open" },
+        { key: "Tab", label: "focus body" },
+        { key: "Ctrl+K", label: "palette" },
+        { key: "Ctrl+C", label: "quit" },
+      ];
+    }
+    if (region === "toolbar") {
+      return [
+        { key: "←→", label: "button" },
+        { key: "Enter", label: "activate" },
+        { key: "Tab", label: "focus tabs" },
+        { key: "Esc", label: "back" },
+      ];
+    }
+    return [
+      { key: "↑↓", label: "move" },
+      { key: "Enter", label: "select" },
+      { key: "Tab", label: "switch area" },
+      { key: "Esc", label: "back" },
+      { key: "Ctrl+K", label: "palette" },
+    ];
+  })();
 
   return (
     <Box flexDirection="column">
-      <StatusBar screen={screen} {...(snapshot !== null ? { mcpOnline: snapshot.dashboard.mcpOnline } : {})} />
-      {message !== null ? <Text color={message.kind === "error" ? "red" : "green"}>{message.text}</Text> : null}
+      <TabBar
+        activeIndex={Math.max(0, screenIndex)}
+        focusedIndex={tabFocus}
+        isFocused={region === "tabs"}
+      />
 
       {screen === "dashboard" && snapshot !== null ? (
         <DashboardScreen dashboard={snapshot.dashboard} audit={snapshot.audit} />
@@ -1112,154 +1873,283 @@ export function TuiApp(props: AppProps): ReactElement {
 
       {screen === "secrets" ? (
         <SecretsScreen
-          secrets={secretRows}
-          selected={selectedSecret}
+          secrets={filteredSecrets}
+          selectedIndex={selectedSecret}
           filter={secretFilter}
           selectedSecret={selectedSecretRow}
+          bodyFocused={region === "body"}
+          toolbarFocused={region === "toolbar"}
+          toolbarIndex={toolbarFocus}
+          toolbarButtons={secretsToolbar}
         />
       ) : null}
 
       {screen === "audit" ? (
         <AuditScreen
           entries={filteredAudit}
-          selected={selectedAudit}
+          selectedIndex={selectedAudit}
           filter={auditFilter}
           auditDetail={auditDetail}
-          model={model}
+          model={selectedAuditEntry !== null ? buildAuditDetailModelForTui(selectedAuditEntry) : null}
+          bodyFocused={region === "body"}
+          toolbarFocused={region === "toolbar"}
+          toolbarIndex={toolbarFocus}
+          toolbarButtons={auditToolbar}
         />
       ) : null}
 
       {screen === "policies" ? (
         <PoliciesScreen
-          secrets={secretRows}
-          selected={selectedSecret}
+          secrets={filteredSecrets}
+          selectedIndex={selectedSecret}
           selectedSecret={selectedSecretRow}
           policyView={policyView}
-          strictMode={selectedPolicyHandle?.getStrictMode() === true}
+          strictMode={strictMode}
+          bodyFocused={region === "body"}
+          toolbarFocused={region === "toolbar"}
+          toolbarIndex={toolbarFocus}
+          toolbarButtons={policiesToolbar}
         />
       ) : null}
 
-      {filter !== null ? (
-        <Box borderStyle="round" flexDirection="column" padding={1}>
-          <Text color={theme.accent} bold>Filter {filter.screen}</Text>
-          {filter.screen === "audit" ? (
-            <Text color={theme.dim}>Use `secret:NAME`, `surface:NAME`, `status:allowed|denied`, or plain text.</Text>
-          ) : null}
-          <TextInput value={filter.value} onChange={(value) => setFilter({ ...filter, value })} />
-        </Box>
+      {dialog !== null ? <DialogOverlay dialog={dialog} /> : null}
+      {region === "palette" ? (
+        <CommandPalette
+          query={paletteQuery}
+          onQueryChange={(q) => {
+            setPaletteQuery(q);
+            setPaletteIndex(0);
+          }}
+          commands={paletteCommands}
+          selectedIndex={paletteIndex}
+        />
       ) : null}
 
-      {dialog?.kind === "add" || dialog?.kind === "rotate" ? (
-        <Box borderStyle="round" flexDirection="column" padding={1}>
-          <Text color={theme.accent} bold>{dialog.kind === "add" ? "Add secret" : "Rotate secret"}</Text>
-          <Text color={theme.dim}>scope: {dialog.scope}</Text>
-          <Text color={theme.dim}>Name</Text>
-          <TextInput
-            focus={dialog.focus === "name"}
-            value={dialog.name}
-            onChange={(name) => setDialog({ ...dialog, name })}
-          />
-          <Text color={theme.dim}>Value hidden ({String(dialog.value.length)} chars)</Text>
-          <TextInput
-            focus={dialog.focus === "value"}
-            mask="*"
-            value={dialog.value}
-            onChange={(value) => setDialog({ ...dialog, value })}
-          />
-          <Text color={theme.dim}>Press p in the value field to paste from clipboard.</Text>
-        </Box>
+      {toast !== null ? (
+        <Toast kind={toast.kind} text={toast.text} />
       ) : null}
 
-      {dialog?.kind === "bulk" ? (
-        <Box borderStyle="round" flexDirection="column" padding={1}>
-          <Text color={theme.accent} bold>Bulk add</Text>
-          {dialog.preview === null ? (
-            <>
-              <Text color={theme.dim}>
-                Hidden buffer: {String(dialog.buffer.split(/\r?\n/u).filter((line) => line.length > 0).length)} lines, {String(dialog.buffer.length)} chars
-              </Text>
-              <Text color={theme.dim}>Paste with p, then press Enter for a preview.</Text>
-            </>
-          ) : (
-            <>
-              <Text color={theme.dim}>
-                {String(dialog.preview.added.length)} secrets will be added, {String(dialog.preview.skipped.length)} will be skipped
-              </Text>
-              <Text color={theme.dim}>scope: {dialog.scope}</Text>
-              {dialog.preview.added.map((entry) => (
-                <Text key={`add:${String(entry.line)}:${entry.name}`}>add {entry.name}</Text>
-              ))}
-              {dialog.preview.skipped.map((skip) => (
-                <Text key={`skip:${String(skip.line)}`} color={theme.dim}>line {String(skip.line)}: {skip.reason}</Text>
-              ))}
-            </>
-          )}
-        </Box>
-      ) : null}
-
-      {dialog?.kind === "delete" ? (
-        <Box borderStyle="round" flexDirection="column" padding={1}>
-          <Text bold>Delete &quot;{dialog.name}&quot; from {dialog.scope}?</Text>
-          <Text color={theme.dim}>[y] yes  [n] no</Text>
-        </Box>
-      ) : null}
-
-      {dialog?.kind === "policy" ? (
-        <Box borderStyle="round" flexDirection="column" padding={1}>
-          {dialog.awaitingConfirm ? (
-            <>
-              <Text bold>
-                You are enabling a wildcarded policy. This broadens what the agent can do with secret {selectedSecretRow?.name ?? ""}. Continue? y/N
-              </Text>
-            </>
-          ) : (
-            <>
-              {(() => {
-                const previewPolicy = buildPolicyFromDialog(dialog);
-                const badges = policyBadgeTokens(previewPolicy instanceof Error ? undefined : previewPolicy);
-                return <Text color={theme.dim}>Preview badges: {badges.join(" ") || "none"}</Text>;
-              })()}
-              <Text color={theme.accent} bold>Edit policy</Text>
-              <Text color={theme.dim}>Fields are structured: hosts/env accept comma-separated values; commands use `binary|allowed1,allowed2|forbidden1,forbidden2` separated by `;`.</Text>
-              <Text color={dialog.focus === "hosts" ? theme.accent : theme.dim}>Allowed HTTP hosts</Text>
-              <TextInput
-                focus={dialog.focus === "hosts"}
-                value={dialog.hostsText}
-                onChange={(hostsText) => setDialog({ ...dialog, hostsText })}
-              />
-              <Text color={dialog.focus === "commands" ? theme.accent : theme.dim}>Allowed commands</Text>
-              <TextInput
-                focus={dialog.focus === "commands"}
-                value={dialog.commandsText}
-                onChange={(commandsText) => setDialog({ ...dialog, commandsText })}
-              />
-              <Text color={dialog.focus === "env" ? theme.accent : theme.dim}>Allowed env vars</Text>
-              <TextInput
-                focus={dialog.focus === "env"}
-                value={dialog.envText}
-                onChange={(envText) => setDialog({ ...dialog, envText })}
-              />
-              <Text color={dialog.focus === "requests" ? theme.accent : theme.dim}>Rate limit requests</Text>
-              <TextInput
-                focus={dialog.focus === "requests"}
-                value={dialog.requestsText}
-                onChange={(requestsText) => setDialog({ ...dialog, requestsText })}
-              />
-              <Text color={dialog.focus === "window" ? theme.accent : theme.dim}>Rate limit window seconds</Text>
-              <TextInput
-                focus={dialog.focus === "window"}
-                value={dialog.windowText}
-                onChange={(windowText) => setDialog({ ...dialog, windowText })}
-              />
-            </>
-          )}
-        </Box>
-      ) : null}
-
-      {showHelp ? <HelpOverlay /> : null}
-      {palette !== null ? <PaletteOverlay selected={palette.selected} /> : null}
+      <HelpBar hints={hints} />
     </Box>
   );
+
+  // ============ DIALOG RENDERER ============
+  function DialogOverlay(innerProps: { readonly dialog: DialogState }): ReactElement {
+    const d = innerProps.dialog;
+    if (d.kind === "add" || d.kind === "rotate") {
+      const fields = addDialogFields(d);
+      const actions: readonly ToolbarButton[] = [
+        { label: "Cancel" },
+        { label: "Save", variant: "success" },
+      ];
+      return (
+        <Dialog
+          title={d.kind === "add" ? "Add secret" : "Rotate value"}
+          description={`scope: ${d.scope}`}
+          actions={actions}
+          focusedAction={d.focus.kind === "actions" ? d.focus.index : 0}
+          actionsFocused={d.focus.kind === "actions"}
+          errorText={d.error}
+        >
+          {d.kind === "add" ? (
+            <FormField
+              label="Name"
+              value={d.name}
+              isFieldFocused={d.focus.kind === "field" && fields[d.focus.index]?.id === "name" && !d.focus.onPaste}
+              isPasteButtonFocused={d.focus.kind === "field" && fields[d.focus.index]?.id === "name" && d.focus.onPaste}
+              showPasteButton
+              onChange={(name) => setDialog({ ...d, name })}
+            />
+          ) : null}
+          <FormField
+            label="Value"
+            value={d.value}
+            mask="*"
+            isFieldFocused={d.focus.kind === "field" && fields[d.focus.index]?.id === "value" && !d.focus.onPaste}
+            isPasteButtonFocused={d.focus.kind === "field" && fields[d.focus.index]?.id === "value" && d.focus.onPaste}
+            showPasteButton
+            onChange={(value) => setDialog({ ...d, value })}
+            hint={`hidden · ${String(d.value.length)} chars`}
+          />
+        </Dialog>
+      );
+    }
+    if (d.kind === "delete") {
+      const actions: readonly ToolbarButton[] = [
+        { label: "Cancel" },
+        { label: "Delete", variant: "danger" },
+      ];
+      return (
+        <Dialog
+          title="Delete this secret?"
+          description={`${d.name} from ${d.scope} scope will be permanently deleted.`}
+          actions={actions}
+          focusedAction={d.focus.kind === "actions" ? d.focus.index : 1}
+          actionsFocused
+        />
+      );
+    }
+    if (d.kind === "bulk") {
+      const title = "Bulk import secrets";
+      if (d.preview === null) {
+        const lines = d.buffer.split(/\r?\n/u).filter((line) => line.length > 0).length;
+        const hasBuffer = d.buffer.length > 0;
+        const actions: readonly ToolbarButton[] = [
+          { label: "Cancel" },
+          { label: hasBuffer ? "Preview" : "Paste from clipboard" },
+        ];
+        return (
+          <Dialog
+            title={title}
+            description={`scope: ${d.scope} (↑/↓ to toggle)`}
+            actions={actions}
+            focusedAction={d.focus.kind === "actions" ? d.focus.index : 1}
+            actionsFocused
+            errorText={d.error}
+          >
+            <Text color={theme.dim}>
+              {String(lines)} lines captured ({String(d.buffer.length)} chars, hidden)
+            </Text>
+          </Dialog>
+        );
+      }
+      const actions: readonly ToolbarButton[] = [
+        { label: "Cancel" },
+        { label: "Import", variant: "success" },
+      ];
+      return (
+        <Dialog
+          title={title}
+          description={`${String(d.preview.added.length)} to add, ${String(d.preview.skipped.length)} skipped · scope: ${d.scope}`}
+          actions={actions}
+          focusedAction={d.focus.kind === "actions" ? d.focus.index : 1}
+          actionsFocused
+          errorText={d.error}
+        >
+          {d.preview.added.map((entry) => (
+            <Text key={`add:${String(entry.line)}:${entry.name}`} color={theme.text}>
+              add {entry.name}
+            </Text>
+          ))}
+          {d.preview.skipped.map((skip) => (
+            <Text key={`skip:${String(skip.line)}`} color={theme.dim}>
+              line {String(skip.line)}: {skip.reason}
+            </Text>
+          ))}
+        </Dialog>
+      );
+    }
+    if (d.kind === "policy") {
+      if (d.awaitingConfirm) {
+        const actions: readonly ToolbarButton[] = [
+          { label: "Cancel" },
+          { label: "Keep editing" },
+          { label: "Save anyway", variant: "danger" },
+        ];
+        return (
+          <Dialog
+            title="Wildcard policy detected"
+            description={`Enabling a wildcarded policy broadens what the agent can do with secret ${d.targetName}. Continue?`}
+            actions={actions}
+            focusedAction={d.focus.kind === "actions" ? d.focus.index : 1}
+            actionsFocused
+          />
+        );
+      }
+      const preview = buildPolicyFromDialog(d);
+      const badges = policyBadgeTokens(preview instanceof Error ? undefined : preview);
+      const actions: readonly ToolbarButton[] = [
+        { label: "Cancel" },
+        { label: "Save", variant: "success" },
+      ];
+      const isField = (id: string): boolean =>
+        d.focus.kind === "field" && policyDialogFields[d.focus.index]?.id === id;
+      return (
+        <Dialog
+          title={`Edit policy for ${d.targetName}`}
+          description="hosts/env: comma-separated · commands: binary|allowed1,allowed2|forbidden1 ; next"
+          actions={actions}
+          focusedAction={d.focus.kind === "actions" ? d.focus.index : 0}
+          actionsFocused={d.focus.kind === "actions"}
+          errorText={d.error}
+        >
+          <Text color={theme.dim}>
+            Preview badges: <Text color={theme.warning}>{badges.join(" ") || "none"}</Text>
+          </Text>
+          <FormField
+            label="Allowed HTTP hosts"
+            value={d.hostsText}
+            isFieldFocused={isField("hosts")}
+            isPasteButtonFocused={false}
+            showPasteButton={false}
+            onChange={(hostsText) => setDialog({ ...d, hostsText })}
+          />
+          <FormField
+            label="Allowed commands"
+            value={d.commandsText}
+            isFieldFocused={isField("commands")}
+            isPasteButtonFocused={false}
+            showPasteButton={false}
+            onChange={(commandsText) => setDialog({ ...d, commandsText })}
+          />
+          <FormField
+            label="Allowed env vars"
+            value={d.envText}
+            isFieldFocused={isField("env")}
+            isPasteButtonFocused={false}
+            showPasteButton={false}
+            onChange={(envText) => setDialog({ ...d, envText })}
+          />
+          <FormField
+            label="Rate limit requests"
+            value={d.requestsText}
+            isFieldFocused={isField("requests")}
+            isPasteButtonFocused={false}
+            showPasteButton={false}
+            onChange={(requestsText) => setDialog({ ...d, requestsText })}
+          />
+          <FormField
+            label="Rate limit window seconds"
+            value={d.windowText}
+            isFieldFocused={isField("window")}
+            isPasteButtonFocused={false}
+            showPasteButton={false}
+            onChange={(windowText) => setDialog({ ...d, windowText })}
+          />
+        </Dialog>
+      );
+    }
+    // filter
+    if (d.kind !== "filter") {
+      return <Text color={theme.dim}>unknown dialog</Text>;
+    }
+    const actions: readonly ToolbarButton[] = [
+      { label: "Cancel" },
+      { label: "Apply", variant: "success" },
+    ];
+    return (
+      <Dialog
+        title={`Filter ${d.target}`}
+        description={
+          d.target === "audit"
+            ? "Use secret:NAME, surface:NAME, status:allowed|denied, or plain text."
+            : "Match secrets by name."
+        }
+        actions={actions}
+        focusedAction={d.focus.kind === "actions" ? d.focus.index : 0}
+        actionsFocused={d.focus.kind === "actions"}
+      >
+        <FormField
+          label="Query"
+          value={d.value}
+          isFieldFocused={d.focus.kind === "field"}
+          isPasteButtonFocused={false}
+          showPasteButton={false}
+          onChange={(value) => setDialog({ ...d, value })}
+        />
+      </Dialog>
+    );
+  }
 }
 
 export interface RunTuiOptions {

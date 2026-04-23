@@ -17,52 +17,74 @@ interface DashboardScreenProps {
   readonly audit: readonly AuditEvent[];
 }
 
+function StatCard(props: {
+  readonly label: string;
+  readonly children: ReactElement;
+}): ReactElement {
+  return (
+    <Box
+      borderStyle="round"
+      borderColor={theme.border}
+      flexDirection="column"
+      paddingX={1}
+      width={22}
+    >
+      <Text color={theme.dim}>{props.label}</Text>
+      {props.children}
+    </Box>
+  );
+}
+
 export function DashboardScreen(props: DashboardScreenProps): ReactElement {
   const { dashboard, audit } = props;
-  const recentAudit = [...audit].slice(-8).reverse();
+  const recent = [...audit].slice(-8).reverse();
 
   return (
-    <Box flexDirection="column" gap={1}>
+    <Box flexDirection="column" paddingX={1} gap={1}>
       <Box flexDirection="row" gap={1}>
-        <Box borderStyle="round" padding={1} flexDirection="column">
-          <Text color={theme.dim}>global secrets</Text>
-          <Text bold>{String(dashboard.globalCount)}</Text>
-        </Box>
-        <Box borderStyle="round" padding={1} flexDirection="column">
-          <Text color={theme.dim}>project secrets</Text>
-          <Text bold>{String(dashboard.projectCount)}</Text>
-        </Box>
-        <Box borderStyle="round" padding={1} flexDirection="column">
-          <Text color={theme.dim}>MCP server</Text>
-          <Text color={dashboard.mcpOnline ? "green" : "red"}>
-            {dashboard.mcpOnline ? "● online" : "○ offline"}
-          </Text>
-        </Box>
-        <Box borderStyle="round" padding={1} flexDirection="column">
-          <Text color={theme.dim}>risky policies</Text>
-          {dashboard.riskyPolicyCount > 0 ? (
-            <Text color="yellow">{String(dashboard.riskyPolicyCount)}</Text>
+        <StatCard label="global secrets">
+          <Text bold color={theme.text}>{String(dashboard.globalCount)}</Text>
+        </StatCard>
+        <StatCard label="project secrets">
+          <Text bold color={theme.text}>{String(dashboard.projectCount)}</Text>
+        </StatCard>
+        <StatCard label="MCP server">
+          {dashboard.mcpOnline ? (
+            <Text color={theme.success} bold>● online</Text>
           ) : (
-            <Text>{String(dashboard.riskyPolicyCount)}</Text>
+            <Text color={theme.danger} bold>○ offline</Text>
           )}
-        </Box>
+        </StatCard>
+        <StatCard label="risky policies">
+          {dashboard.riskyPolicyCount > 0 ? (
+            <Text color={theme.warning} bold>{String(dashboard.riskyPolicyCount)}</Text>
+          ) : (
+            <Text color={theme.dim}>{String(dashboard.riskyPolicyCount)}</Text>
+          )}
+        </StatCard>
       </Box>
 
-      <Box borderStyle="round" flexDirection="column" paddingX={1}>
-        <Text color={theme.dim}>Dashboard | MCP {dashboard.mcpOnline ? "online" : "offline"}</Text>
-        <Text color={theme.dim}>Vault mtimes | global={dashboard.globalMtime} | project={dashboard.projectMtime}</Text>
-        <Text color={theme.dim}>Risky policies={String(dashboard.riskyPolicyCount)}</Text>
-        <Text bold>Recent audit activity</Text>
-        {recentAudit.length === 0 ? (
-          <Text color={theme.dim}>No audit entries yet.</Text>
+      <Box
+        borderStyle="round"
+        borderColor={theme.border}
+        flexDirection="column"
+        paddingX={1}
+      >
+        <Text color={theme.text} bold>Recent activity</Text>
+        {recent.length === 0 ? (
+          <Text color={theme.dim}>No activity yet.</Text>
         ) : (
-          recentAudit.map((entry) => (
-            <Box key={entry.request_id} flexDirection="row" gap={1}>
-              <Text color={entry.outcome === "allowed" ? "green" : "red"}>
-                {entry.outcome === "allowed" ? "✓" : "✗"}
+          recent.map((entry) => (
+            <Box key={entry.request_id} flexDirection="row">
+              <Text color={entry.outcome === "allowed" ? theme.success : theme.danger}>
+                {entry.outcome === "allowed" ? "✓ " : "✗ "}
               </Text>
-              <Text color={theme.dim}>{entry.ts}</Text>
-              <Text>{entry.secret_name}</Text>
+              <Box width={22}>
+                <Text color={theme.dim}>{entry.ts.slice(0, 19).replace("T", " ")}</Text>
+              </Box>
+              <Box width={28}>
+                <Text color={theme.text}>{entry.secret_name}</Text>
+              </Box>
               <Text color={theme.dim}>{entry.target}</Text>
             </Box>
           ))

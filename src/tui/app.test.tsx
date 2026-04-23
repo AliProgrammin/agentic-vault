@@ -17,6 +17,21 @@ import {
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+// --- Key helpers: arrow/Tab/Enter/Esc escape codes for the new UI ---
+const K = {
+  up: "[A",
+  down: "[B",
+  right: "[C",
+  left: "[D",
+  tab: "\t",
+  enter: "\r",
+  esc: "",
+};
+
+async function pause(ms = 20): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 const WILDCARD_POLICY: Policy = {
   allowed_http_hosts: [{ value: "*.example.com", wildcard: true, wildcard_kind: "subdomain" }],
   allowed_commands: [{ binary: "wrangler", allowed_args_patterns: ["^deploy$"] }],
@@ -57,6 +72,47 @@ function makeServices(overrides: Partial<TuiServices> = {}): TuiServices {
   };
 }
 
+// Move focus from the default body region to the Secrets tab.
+// Default is "body" on dashboard; Esc goes to tabs, → moves to Secrets, Enter opens it.
+async function openSecretsTab(app: ReturnType<typeof render>): Promise<void> {
+  await act(async () => {
+    app.stdin.write(K.esc);      // body → tabs
+    await pause(40);
+    app.stdin.write(K.right);    // Dashboard → Secrets
+    await pause(25);
+    app.stdin.write(K.enter);    // open Secrets
+    await pause(25);
+  });
+}
+
+async function openAuditTab(app: ReturnType<typeof render>): Promise<void> {
+  await act(async () => {
+    app.stdin.write(K.esc);
+    await pause(40);
+    app.stdin.write(K.right);
+    await pause(25);
+    app.stdin.write(K.right);
+    await pause(25);
+    app.stdin.write(K.enter);
+    await pause(25);
+  });
+}
+
+async function openPoliciesTab(app: ReturnType<typeof render>): Promise<void> {
+  await act(async () => {
+    app.stdin.write(K.esc);
+    await pause(40);
+    app.stdin.write(K.right);
+    await pause(25);
+    app.stdin.write(K.right);
+    await pause(25);
+    app.stdin.write(K.right);
+    await pause(25);
+    app.stdin.write(K.enter);
+    await pause(25);
+  });
+}
+
 describe("TuiApp", () => {
   let tmp: string;
   beforeEach(async () => {
@@ -66,7 +122,7 @@ describe("TuiApp", () => {
     await fs.rm(tmp, { recursive: true, force: true });
   });
 
-  it("renders the dashboard snapshot with vault status, MCP indicator, risky count, audit rows, and footer help", async () => {
+  it("renders the dashboard with stat cards, MCP indicator, and recent activity", async () => {
     const password = "tui-dashboard-password";
     const vaultPath = path.join(tmp, ".secretproxy.enc");
     const handle = await createPopulatedGlobalVault(vaultPath, password, [
@@ -84,28 +140,26 @@ describe("TuiApp", () => {
       caller_cwd: tmp,
     };
 
-    const app = render(<TuiApp deps={harness.deps} services={makeServices({ readAuditLog: async () => [auditEntry] })} />);
+    const app = render(
+      <TuiApp
+        deps={harness.deps}
+        services={makeServices({ readAuditLog: async () => [auditEntry] })}
+      />,
+    );
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await pause();
     });
 
-    expect(app.lastFrame()).toMatchInlineSnapshot(`
-      "Agentic Vault          / home  s secrets  u audit  p policies  ? help  q quit          ○ MCP offline
-      ╭────────────────╮ ╭─────────────────╮ ╭────────────╮ ╭────────────────╮
-      │                │ │                 │ │            │ │                │
-      │ global secrets │ │ project secrets │ │ MCP server │ │ risky policies │
-      │ 1              │ │ 0               │ │ ○ offline  │ │ 1              │
-      │                │ │                 │ │            │ │                │
-      ╰────────────────╯ ╰─────────────────╯ ╰────────────╯ ╰────────────────╯
-
-      ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
-      │ Dashboard | MCP offline                                                                          │
-      │ Vault mtimes | global=1970-01-01T00:00:00.001Z | project=missing                                 │
-      │ Risky policies=1                                                                                 │
-      │ Recent audit activity                                                                            │
-      │ ✓ 2026-04-21T10:00:00.000Z API_TOKEN api.example.com                                             │
-      ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"
-    `);
+    const frame = app.lastFrame() ?? "";
+    expect(frame).toContain("Agentic Vault");
+    expect(frame).toContain("Dashboard");
+    expect(frame).toContain("global secrets");
+    expect(frame).toContain("project secrets");
+    expect(frame).toContain("MCP server");
+    expect(frame).toContain("risky policies");
+    expect(frame).toContain("Recent activity");
+    expect(frame).toContain("API_TOKEN");
+    expect(frame).toContain("offline");
     app.unmount();
   });
 
@@ -119,29 +173,60 @@ describe("TuiApp", () => {
     const app = render(<TuiApp deps={harness.deps} services={services} />);
 
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await pause();
     });
 
+    await openSecretsTab(app);
+
+    // Focus toolbar, first button is "+ Add secret"
     await act(async () => {
-      app.stdin.write("s");
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      app.stdin.write("a");
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      app.stdin.write(K.tab);      // body → toolbar
+      await pause(10);
+      app.stdin.write(K.enter);    // activate "+ Add secret"
+      await pause(20);
+    });
+
+    // Dialog: Name field focused. Type name, Tab to value, paste.
+    await act(async () => {
       app.stdin.write("NEW_SECRET");
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      app.stdin.write("\r");
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      app.stdin.write("p");
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      app.stdin.write("\r");
-      await new Promise((resolve) => setTimeout(resolve, 120));
+      await pause(30);
+    });
+    await act(async () => {
+      app.stdin.write(K.tab); // name paste
+      await pause(25);
+    });
+    await act(async () => {
+      app.stdin.write(K.tab); // value field
+      await pause(25);
+    });
+    await act(async () => {
+      app.stdin.write(K.tab); // value paste button
+      await pause(25);
+    });
+    await act(async () => {
+      app.stdin.write(K.enter); // paste into value
+      await pause(60);
+    });
+    await act(async () => {
+      app.stdin.write(K.tab); // to actions (Cancel)
+      await pause(25);
+    });
+    await act(async () => {
+      app.stdin.write(K.right); // to Save
+      await pause(25);
+    });
+    await act(async () => {
+      app.stdin.write(K.enter); // save
+      await pause(120);
     });
 
     const reopened = await harness.deps.unlockVault(vaultPath, password);
     expect(reopened.get("NEW_SECRET")).toBe("PASTED_VALUE");
     reopened.close();
-    expect(app.lastFrame()).toContain("added NEW_SECRET");
-    expect(app.lastFrame()).not.toContain("PASTED_VALUE");
+    const frame = app.lastFrame() ?? "";
+    // The saved row shows in the Secrets list; plaintext must never leak.
+    expect(frame).toContain("NEW_SECRET");
+    expect(frame).not.toContain("PASTED_VALUE");
     app.unmount();
   });
 
@@ -153,16 +238,22 @@ describe("TuiApp", () => {
     const harness = makeTestDeps({ cwd: tmp, homedir: tmp, password, keychainPopulated: true });
     const watcher = new FakeWatcher();
     let entries: AuditEvent[] = [];
-    const app = render(<TuiApp deps={harness.deps} services={makeServices({
-      readAuditLog: async () => entries,
-      watchAuditLog: (_path, onChange) => watcher.watch(onChange),
-    })} />);
+    const app = render(
+      <TuiApp
+        deps={harness.deps}
+        services={makeServices({
+          readAuditLog: async () => entries,
+          watchAuditLog: (_p, onChange) => watcher.watch(onChange),
+        })}
+      />,
+    );
 
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await pause();
     });
 
-    app.stdin.write("u");
+    await openAuditTab(app);
+
     await act(async () => {
       entries = [{
         ts: "2026-04-21T11:00:00.000Z",
@@ -174,14 +265,14 @@ describe("TuiApp", () => {
         caller_cwd: tmp,
       }];
       watcher.emit();
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await pause();
     });
 
-    expect(app.lastFrame()).toContain("TAIL_SECRET");
+    expect(app.lastFrame() ?? "").toContain("TAIL_SECRET");
     app.unmount();
   });
 
-  it("filters audit entries by secret/surface/status predicates", async () => {
+  it("filters audit entries by secret/surface/status predicates via the filter dialog", async () => {
     const password = "tui-filter-password";
     const vaultPath = path.join(tmp, ".secretproxy.enc");
     const handle = await createPopulatedGlobalVault(vaultPath, password, []);
@@ -209,40 +300,71 @@ describe("TuiApp", () => {
         surface: "mcp_http_request",
       },
     ];
-    const app = render(<TuiApp deps={harness.deps} services={makeServices({ readAuditLog: async () => entries })} />);
+    const app = render(
+      <TuiApp
+        deps={harness.deps}
+        services={makeServices({ readAuditLog: async () => entries })}
+      />,
+    );
 
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      app.stdin.write("u");
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      app.stdin.write("/");
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      app.stdin.write("secret:MATCH_ME surface:mcp_run_command status:denied");
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await pause();
     });
 
-    expect(app.lastFrame()).toContain("MATCH_ME");
-    expect(app.lastFrame()).not.toContain("IGNORE_ME");
+    await openAuditTab(app);
+
+    // Tab to toolbar, Enter on "Filter" button (first).
+    await act(async () => {
+      app.stdin.write(K.tab);  // body → toolbar
+      await pause(10);
+      app.stdin.write(K.enter); // activate Filter
+      await pause(20);
+    });
+
+    await act(async () => {
+      app.stdin.write("secret:MATCH_ME surface:mcp_run_command status:denied");
+      await pause(20);
+      // Tab to actions, right to Apply, Enter.
+      app.stdin.write(K.tab);   // actions (Cancel focused)
+      await pause(5);
+      app.stdin.write(K.right); // Apply
+      await pause(5);
+      app.stdin.write(K.enter); // Apply
+      await pause(20);
+    });
+
+    const frame = app.lastFrame() ?? "";
+    expect(frame).toContain("MATCH_ME");
+    expect(frame).not.toContain("IGNORE_ME");
     app.unmount();
   });
 
-  it("Esc returns from a screen to the dashboard", async () => {
+  it("Esc moves focus from the body region up to the tab bar without changing screen content", async () => {
     const password = "tui-esc-password";
     const vaultPath = path.join(tmp, ".secretproxy.enc");
-    const handle = await createPopulatedGlobalVault(vaultPath, password, []);
+    const handle = await createPopulatedGlobalVault(vaultPath, password, [
+      { name: "ESC_TEST", value: "S3" },
+    ]);
     handle.close();
     const harness = makeTestDeps({ cwd: tmp, homedir: tmp, password, keychainPopulated: true });
     const app = render(<TuiApp deps={harness.deps} services={makeServices()} />);
 
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      app.stdin.write("s");
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      app.stdin.write("\u001b");
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await pause();
     });
 
-    expect(app.lastFrame()).toContain("Dashboard | MCP offline");
+    // Open Secrets
+    await openSecretsTab(app);
+    expect(app.lastFrame() ?? "").toContain("Secrets");
+
+    // Esc from body → tabs; Secrets screen still visible, but tab-bar focus indicator shifts.
+    await act(async () => {
+      app.stdin.write(K.esc);
+      await pause();
+    });
+    const frame = app.lastFrame() ?? "";
+    expect(frame).toContain("ESC_TEST"); // still on Secrets screen
+    expect(frame).toContain("Secrets"); // tab still active
     app.unmount();
   });
 
@@ -278,18 +400,27 @@ describe("TuiApp", () => {
       surface: "mcp_http_request",
     };
     const expected = formatAuditDetail(buildRenderModel(event), { tty: false });
-    const app = render(<TuiApp deps={harness.deps} services={makeServices({ readAuditLog: async () => [event] })} />);
+    const app = render(
+      <TuiApp
+        deps={harness.deps}
+        services={makeServices({ readAuditLog: async () => [event] })}
+      />,
+    );
 
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      app.stdin.write("u");
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      app.stdin.write("\r");
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await pause();
+    });
+    await openAuditTab(app);
+
+    // Enter on body drills into detail
+    await act(async () => {
+      app.stdin.write(K.enter);
+      await pause();
     });
 
-    expect(app.lastFrame()).toContain("━━ Summary ━━");
-    expect(app.lastFrame()).toContain(expected.split("\n")[1] ?? "id:");
+    const frame = app.lastFrame() ?? "";
+    expect(frame).toContain("━━ Summary ━━");
+    expect(frame).toContain(expected.split("\n")[1] ?? "id:");
     app.unmount();
   });
 
@@ -305,7 +436,7 @@ describe("TuiApp", () => {
     expect(policyBadgeTokens(WILDCARD_POLICY)).toEqual(["[RISKY]"]);
   });
 
-  it("shows the strict-mode banner and keeps the vault unchanged when wildcard policy save is refused", async () => {
+  it("shows the strict-mode banner on the policies screen", async () => {
     const password = "tui-strict-password";
     const vaultPath = path.join(tmp, ".secretproxy.enc");
     const handle = await createPopulatedGlobalVault(vaultPath, password, [
@@ -318,25 +449,61 @@ describe("TuiApp", () => {
     const harness = makeTestDeps({ cwd: tmp, homedir: tmp, password, keychainPopulated: true });
     const app = render(<TuiApp deps={harness.deps} services={makeServices()} />);
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await pause();
     });
 
-    app.stdin.write("p");
-    app.stdin.write("e");
-    app.stdin.write("*");
-    app.stdin.write("\r");
+    await openPoliciesTab(app);
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await pause();
     });
 
-    const reopened = await harness.deps.unlockVault(vaultPath, password);
-    expect(reopened.getRecord("STRICT_ONE")?.policy).toBeUndefined();
-    reopened.close();
-    expect(app.lastFrame()).toContain("strict mode is enabled for this vault");
+    const frame = app.lastFrame() ?? "";
+    expect(frame).toContain("Strict mode");
+    expect(frame).toContain("STRICT_ONE");
     app.unmount();
   });
 
-  it("shows wildcard confirmation, supports no/yes, and never renders plaintext values while switching screens", async () => {
+  it("rejects a wildcard save in strict mode through the policy dialog without modifying the vault", async () => {
+    const password = "tui-strict-save";
+    const vaultPath = path.join(tmp, ".secretproxy.enc");
+    const handle = await createPopulatedGlobalVault(vaultPath, password, [
+      { name: "STRICT_TWO", value: "SEKRET123" },
+    ]);
+    handle.setStrictMode(true);
+    await handle.save();
+    handle.close();
+
+    const harness = makeTestDeps({ cwd: tmp, homedir: tmp, password, keychainPopulated: true });
+    const app = render(<TuiApp deps={harness.deps} services={makeServices()} />);
+    await act(async () => {
+      await pause();
+    });
+
+    await openPoliciesTab(app);
+    // Tab to toolbar, Enter on "Edit policy"
+    await act(async () => {
+      app.stdin.write(K.tab);
+      await pause(10);
+      app.stdin.write(K.enter); // open edit policy
+      await pause(20);
+    });
+
+    // Hosts field focused. Type wildcard, Tab all the way to actions, right to Save, Enter.
+    await act(async () => {
+      app.stdin.write("*");
+      await pause(10);
+      // Hit Enter: that triggers save directly from a field.
+      app.stdin.write(K.enter);
+      await pause(40);
+    });
+
+    const reopened = await harness.deps.unlockVault(vaultPath, password);
+    expect(reopened.getRecord("STRICT_TWO")?.policy).toBeUndefined();
+    reopened.close();
+    app.unmount();
+  });
+
+  it("shows wildcard confirmation dialog and cancels without saving when user picks Keep editing", async () => {
     const password = "tui-policy-password";
     const vaultPath = path.join(tmp, ".secretproxy.enc");
     const handle = await createPopulatedGlobalVault(vaultPath, password, [
@@ -349,48 +516,65 @@ describe("TuiApp", () => {
     const app = render(<TuiApp deps={harness.deps} services={makeServices()} />);
 
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await pause();
     });
 
+    await openPoliciesTab(app);
     await act(async () => {
-      app.stdin.write("p");
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      app.stdin.write("e");
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      app.stdin.write(K.tab); // to toolbar
+      await pause(10);
+      app.stdin.write(K.enter); // open policy edit
+      await pause(20);
       app.stdin.write("*");
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      app.stdin.write("\r");
-      await new Promise((resolve) => setTimeout(resolve, 40));
+      await pause(10);
+      app.stdin.write(K.enter); // submit
+      await pause(30);
     });
-    expect(app.lastFrame()).toContain("Continue? y/N");
-    app.stdin.write("n");
+
+    expect(app.lastFrame() ?? "").toContain("Wildcard policy detected");
+    expect(app.lastFrame() ?? "").not.toContain("SEKRET123");
+
+    // Keep editing is index 1, default focus. Enter returns to the edit form.
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      app.stdin.write(K.enter);
+      await pause();
     });
 
     let reopened = await harness.deps.unlockVault(vaultPath, password);
     expect(reopened.getRecord("CHOICE")?.policy).toBeUndefined();
     reopened.close();
 
+    // Submit again then Save anyway (index 2).
     await act(async () => {
-      app.stdin.write("\r");
-      await new Promise((resolve) => setTimeout(resolve, 40));
-    });
-    app.stdin.write("y");
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      app.stdin.write(K.enter); // re-submit wildcard
+      await pause(30);
+      app.stdin.write(K.right); // 1 → 2 (Save anyway)
+      await pause(5);
+      app.stdin.write(K.enter);
+      await pause(40);
     });
 
     reopened = await harness.deps.unlockVault(vaultPath, password);
     expect(reopened.getRecord("CHOICE")?.policy).toBeDefined();
     reopened.close();
+    expect(app.lastFrame() ?? "").not.toContain("SEKRET123");
+    app.unmount();
+  });
 
-    app.stdin.write("?");
+  it("renders the help bar instead of a legacy help overlay", async () => {
+    const password = "tui-help-password";
+    const vaultPath = path.join(tmp, ".secretproxy.enc");
+    const handle = await createPopulatedGlobalVault(vaultPath, password, []);
+    handle.close();
+    const harness = makeTestDeps({ cwd: tmp, homedir: tmp, password, keychainPopulated: true });
+    const app = render(<TuiApp deps={harness.deps} services={makeServices()} />);
+
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await pause();
     });
-    expect(app.lastFrame()).toContain("Help");
-    expect(app.lastFrame()).not.toContain("SEKRET123");
+    const frame = app.lastFrame() ?? "";
+    // The persistent help bar is always visible.
+    expect(frame).toMatch(/Tab|Esc|Enter/);
     app.unmount();
   });
 });

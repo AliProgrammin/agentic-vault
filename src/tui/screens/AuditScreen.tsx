@@ -2,79 +2,92 @@ import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { formatAuditDetail, type AuditEvent, type RenderModel } from "../../audit/index.js";
 import { theme } from "../theme.js";
+import { Menu, type MenuItem } from "../components/Menu.js";
+import { Toolbar, type ToolbarButton } from "../components/Toolbar.js";
 
 interface AuditScreenProps {
   readonly entries: readonly AuditEvent[];
-  readonly selected: number;
+  readonly selectedIndex: number;
   readonly filter: string;
   readonly auditDetail: boolean;
   readonly model: RenderModel | null;
+  readonly bodyFocused: boolean;
+  readonly toolbarFocused: boolean;
+  readonly toolbarIndex: number;
+  readonly toolbarButtons: readonly ToolbarButton[];
 }
 
 export function AuditScreen(props: AuditScreenProps): ReactElement {
-  const { entries, selected, filter, auditDetail, model } = props;
+  const { entries, selectedIndex, filter, auditDetail, model } = props;
 
   if (auditDetail && model !== null) {
     const lines = formatAuditDetail(model, { tty: false }).trimEnd().split("\n");
     return (
-      <Box borderStyle="round" flexDirection="column" paddingX={1}>
-        {lines.map((line, index) => (
-          <Text key={`audit-detail:${String(index)}:${line}`}>{line}</Text>
-        ))}
+      <Box flexDirection="column" paddingX={1} gap={1}>
+        <Box
+          borderStyle="round"
+          borderColor={theme.border}
+          flexDirection="column"
+          paddingX={1}
+        >
+          <Text color={theme.accent} bold>Audit detail</Text>
+          {lines.map((line, index) => (
+            <Text key={`audit-detail:${String(index)}`} color={theme.text}>
+              {line}
+            </Text>
+          ))}
+        </Box>
+        <Toolbar
+          buttons={props.toolbarButtons}
+          focused={props.toolbarFocused}
+          focusedIndex={props.toolbarIndex}
+        />
       </Box>
     );
   }
 
+  const items: readonly MenuItem[] = entries.map((entry, index) => ({
+    label: `${entry.outcome === "allowed" ? "✓" : "✗"}  ${entry.ts.padEnd(24)}  ${entry.secret_name.padEnd(22)}  ${entry.target}`,
+    value: `${entry.request_id}:${String(index)}`,
+  }));
+
   return (
-    <Box borderStyle="round" flexDirection="column">
-      {filter.length > 0 ? (
+    <Box flexDirection="column" paddingX={1} gap={1}>
+      <Box
+        borderStyle="round"
+        borderColor={theme.border}
+        flexDirection="column"
+      >
         <Box paddingX={1}>
-          <Text color={theme.dim}>filter: <Text color={theme.accent}>{filter}</Text></Text>
+          <Text color={theme.accent} bold>Audit log</Text>
         </Box>
-      ) : null}
-      <Box paddingX={1} flexDirection="row">
-        <Text bold color={theme.dim}>  {"OUTCOME".padEnd(8)}{"TIMESTAMP".padEnd(26)}{"SECRET".padEnd(24)}TARGET</Text>
+        {filter.length > 0 ? (
+          <Box paddingX={1}>
+            <Text color={theme.dim}>Filter: </Text>
+            <Text color={theme.accent}>{filter}</Text>
+          </Box>
+        ) : null}
+        <Box paddingX={1}>
+          <Text color={theme.dim} bold>
+            {"  "}
+            {"OUTCOME".padEnd(8)}
+            {"TIMESTAMP".padEnd(26)}
+            {"SECRET".padEnd(24)}
+            TARGET
+          </Text>
+        </Box>
+        <Menu
+          items={items}
+          selectedIndex={selectedIndex}
+          isFocused={props.bodyFocused}
+          emptyText="No audit entries yet."
+        />
       </Box>
-      {entries.length === 0 ? (
-        <Box paddingX={1}>
-          <Text color={theme.dim}>No audit entries yet.</Text>
-        </Box>
-      ) : (
-        entries.map((entry, index) => {
-          const isSelected = index === selected;
-          return (
-            <Box key={entry.request_id} paddingX={1} flexDirection="row">
-              {isSelected ? (
-                <Text color={theme.accent}>
-                  {"▶ "}
-                  <Text color={entry.outcome === "allowed" ? "green" : "red"}>
-                    {entry.outcome === "allowed" ? "✓" : "✗"}
-                  </Text>
-                  {"  "}
-                  {entry.ts.padEnd(24)}
-                  {"  "}
-                  {entry.secret_name.slice(0, 22).padEnd(22)}
-                  {"  "}
-                  {entry.target}
-                </Text>
-              ) : (
-                <Text>
-                  {"  "}
-                  <Text color={entry.outcome === "allowed" ? "green" : "red"}>
-                    {entry.outcome === "allowed" ? "✓" : "✗"}
-                  </Text>
-                  {"  "}
-                  {entry.ts.padEnd(24)}
-                  {"  "}
-                  {entry.secret_name.slice(0, 22).padEnd(22)}
-                  {"  "}
-                  {entry.target}
-                </Text>
-              )}
-            </Box>
-          );
-        })
-      )}
+      <Toolbar
+        buttons={props.toolbarButtons}
+        focused={props.toolbarFocused}
+        focusedIndex={props.toolbarIndex}
+      />
     </Box>
   );
 }

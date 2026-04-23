@@ -1,8 +1,10 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import type { Policy } from "../../policy/index.js";
-import { policyBadgeTokens } from "../app.js";
+import { policyBadgeTokens } from "../app-exports.js";
 import { theme } from "../theme.js";
+import { Menu, type MenuItem } from "../components/Menu.js";
+import { Toolbar, type ToolbarButton } from "../components/Toolbar.js";
 
 interface SecretRow {
   readonly name: string;
@@ -21,70 +23,121 @@ interface PolicyView {
 
 interface PoliciesScreenProps {
   readonly secrets: readonly SecretRow[];
-  readonly selected: number;
+  readonly selectedIndex: number;
   readonly selectedSecret: SecretRow | null;
   readonly policyView: PolicyView;
   readonly strictMode: boolean;
+  readonly bodyFocused: boolean;
+  readonly toolbarFocused: boolean;
+  readonly toolbarIndex: number;
+  readonly toolbarButtons: readonly ToolbarButton[];
 }
 
 export function PoliciesScreen(props: PoliciesScreenProps): ReactElement {
-  const { secrets, selected, selectedSecret, policyView, strictMode } = props;
+  const { secrets, selectedIndex, selectedSecret, policyView, strictMode } = props;
+  const items: readonly MenuItem[] = secrets.map((secret, index) => {
+    const badges = policyBadgeTokens(secret.policy);
+    return {
+      label: `${secret.name.padEnd(30)}  ${secret.scope.padEnd(10)}`,
+      value: `${secret.scope}:${secret.name}:${String(index)}`,
+      ...(badges.length > 0 ? { trailing: badges } : {}),
+    };
+  });
 
   return (
-    <Box flexDirection="column" gap={1}>
-      {strictMode ? (
-        <Text color="yellow">strict mode is enabled for this vault; wildcard saves are rejected</Text>
-      ) : null}
-
-      <Box borderStyle="round" flexDirection="column">
-        <Box paddingX={1} flexDirection="row">
-          <Text bold color={theme.dim}>{"NAME".padEnd(32)}</Text>
-          <Text bold color={theme.dim}>{"SCOPE".padEnd(10)}</Text>
-          <Text bold color={theme.dim}>POLICY</Text>
+    <Box flexDirection="column" paddingX={1} gap={1}>
+      <Box flexDirection="row" gap={1}>
+        <Box
+          borderStyle="round"
+          borderColor={theme.border}
+          flexDirection="column"
+          flexGrow={1}
+        >
+          <Box paddingX={1}>
+            <Text color={theme.accent} bold>Secrets</Text>
+          </Box>
+          <Box paddingX={1}>
+            <Text color={theme.dim} bold>
+              {"  "}
+              {"NAME".padEnd(30)}
+              {"  "}
+              {"SCOPE".padEnd(10)}
+              POLICY
+            </Text>
+          </Box>
+          <Menu
+            items={items}
+            selectedIndex={selectedIndex}
+            isFocused={props.bodyFocused}
+            emptyText="No secrets."
+          />
         </Box>
-        {secrets.map((secret, index) => {
-          const isSelected = index === selected;
-          const badges = policyBadgeTokens(secret.policy).join(" ");
-          return (
-            <Box key={`policy:${secret.scope}:${secret.name}`} paddingX={1}>
-              {isSelected ? (
-                <Text color={theme.accent}>
-                  {"▶ "}
-                  {secret.name.slice(0, 30).padEnd(30)}{"  "}
-                  {secret.scope.padEnd(10)}
-                  {badges}
-                </Text>
+        <Box
+          borderStyle="round"
+          borderColor={theme.border}
+          flexDirection="column"
+          paddingX={1}
+          width={48}
+        >
+          {strictMode ? (
+            <Text color={theme.warning}>
+              ⚠ Strict mode: wildcards rejected
+            </Text>
+          ) : null}
+          <Text color={theme.accent} bold>
+            {selectedSecret !== null
+              ? `Policy for ${selectedSecret.name}`
+              : "Policy"}
+          </Text>
+          {selectedSecret !== null ? (
+            <>
+              <Text color={theme.dim}>Allowed HTTP hosts</Text>
+              {policyView.hosts.length > 0 ? (
+                policyView.hosts.map((host) => (
+                  <Text key={`host:${host}`} color={theme.text}>
+                    {"  "}
+                    {host}
+                  </Text>
+                ))
               ) : (
-                <Text>
-                  {"  "}
-                  {secret.name.slice(0, 30).padEnd(30)}{"  "}
-                  {secret.scope.padEnd(10)}
-                  {badges}
-                </Text>
+                <Text color={theme.dim}>  none</Text>
               )}
-            </Box>
-          );
-        })}
-      </Box>
-
-      {selectedSecret !== null ? (
-        <Box borderStyle="round" flexDirection="column" padding={1}>
-          <Text bold>Policy for {selectedSecret.name}</Text>
-          <Text color={theme.dim}>Allowed HTTP hosts</Text>
-          {policyView.hosts.length > 0
-            ? policyView.hosts.map((host) => <Text key={`host:${host}`}>  {host}</Text>)
-            : <Text color={theme.dim}>  none</Text>}
-          <Text color={theme.dim}>Allowed commands</Text>
-          {policyView.commands.length > 0
-            ? policyView.commands.map((command) => <Text key={`cmd:${command}`}>  {command}</Text>)
-            : <Text color={theme.dim}>  none</Text>}
-          <Text color={theme.dim}>Allowed env vars</Text>
-          {policyView.envs.length > 0
-            ? policyView.envs.map((env) => <Text key={`env:${env}`}>  {env}</Text>)
-            : <Text color={theme.dim}>  none</Text>}
-          <Text color={theme.dim}>Rate limit: <Text>{policyView.rate}</Text></Text>
+              <Text color={theme.dim}>Allowed commands</Text>
+              {policyView.commands.length > 0 ? (
+                policyView.commands.map((command) => (
+                  <Text key={`cmd:${command}`} color={theme.text}>
+                    {"  "}
+                    {command}
+                  </Text>
+                ))
+              ) : (
+                <Text color={theme.dim}>  none</Text>
+              )}
+              <Text color={theme.dim}>Allowed env vars</Text>
+              {policyView.envs.length > 0 ? (
+                policyView.envs.map((env) => (
+                  <Text key={`env:${env}`} color={theme.text}>
+                    {"  "}
+                    {env}
+                  </Text>
+                ))
+              ) : (
+                <Text color={theme.dim}>  none</Text>
+              )}
+              <Text color={theme.dim}>
+                Rate limit: <Text color={theme.text}>{policyView.rate}</Text>
+              </Text>
+            </>
+          ) : (
+            <Text color={theme.dim}>No secret selected.</Text>
+          )}
         </Box>
-      ) : null}
+      </Box>
+      <Toolbar
+        buttons={props.toolbarButtons}
+        focused={props.toolbarFocused}
+        focusedIndex={props.toolbarIndex}
+      />
     </Box>
   );
 }

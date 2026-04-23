@@ -1,8 +1,10 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import type { Policy } from "../../policy/index.js";
-import { policyBadgeTokens } from "../app.js";
+import { policyBadgeTokens } from "../app-exports.js";
 import { theme } from "../theme.js";
+import { Menu, type MenuItem } from "../components/Menu.js";
+import { Toolbar, type ToolbarButton } from "../components/Toolbar.js";
 
 interface SecretRow {
   readonly name: string;
@@ -14,74 +16,99 @@ interface SecretRow {
 
 interface SecretsScreenProps {
   readonly secrets: readonly SecretRow[];
-  readonly selected: number;
+  readonly selectedIndex: number;
   readonly filter: string;
   readonly selectedSecret: SecretRow | null;
+  readonly bodyFocused: boolean;
+  readonly toolbarFocused: boolean;
+  readonly toolbarIndex: number;
+  readonly toolbarButtons: readonly ToolbarButton[];
 }
 
 export function SecretsScreen(props: SecretsScreenProps): ReactElement {
-  const { secrets, selected, filter, selectedSecret } = props;
+  const { secrets, selectedIndex, filter, selectedSecret } = props;
+  const items: readonly MenuItem[] = secrets.map((secret, index) => {
+    const badges = policyBadgeTokens(secret.policy);
+    const updated = secret.updatedAt.slice(0, 10);
+    return {
+      label: `${secret.name.padEnd(30)}  ${secret.scope.padEnd(10)}${updated.padEnd(12)}`,
+      value: `${secret.scope}:${secret.name}:${String(index)}`,
+      ...(badges.length > 0 ? { trailing: badges } : {}),
+    };
+  });
 
   return (
-    <Box flexDirection="row" gap={1}>
-      <Box borderStyle="round" flexDirection="column" flexGrow={1}>
-        {filter.length > 0 ? (
+    <Box flexDirection="column" paddingX={1} gap={1}>
+      <Box flexDirection="row" gap={1}>
+        <Box
+          borderStyle="round"
+          borderColor={theme.border}
+          flexDirection="column"
+          flexGrow={1}
+        >
           <Box paddingX={1}>
-            <Text color={theme.dim}>filter: <Text color={theme.accent}>{filter}</Text></Text>
+            <Text color={theme.accent} bold>Secrets</Text>
           </Box>
-        ) : null}
-        <Box paddingX={1} flexDirection="row">
-          <Text bold color={theme.dim}>{"NAME".padEnd(32)}</Text>
-          <Text bold color={theme.dim}>{"SCOPE".padEnd(10)}</Text>
-          <Text bold color={theme.dim}>{"UPDATED".padEnd(14)}</Text>
-          <Text bold color={theme.dim}>POLICY</Text>
+          {filter.length > 0 ? (
+            <Box paddingX={1}>
+              <Text color={theme.dim}>Filter: </Text>
+              <Text color={theme.accent}>{filter}</Text>
+            </Box>
+          ) : null}
+          <Box paddingX={1}>
+            <Text color={theme.dim} bold>
+              {"  "}
+              {"NAME".padEnd(30)}
+              {"  "}
+              {"SCOPE".padEnd(10)}
+              {"UPDATED".padEnd(12)}
+              POLICY
+            </Text>
+          </Box>
+          <Menu
+            items={items}
+            selectedIndex={selectedIndex}
+            isFocused={props.bodyFocused}
+            emptyText="No secrets yet. Focus the toolbar and press Enter on Add secret to create one."
+          />
         </Box>
-        {secrets.length === 0 ? (
-          <Box paddingX={1}>
-            <Text color={theme.dim}>No secrets. Press a to add one.</Text>
-          </Box>
-        ) : (
-          secrets.map((secret, index) => {
-            const isSelected = index === selected;
-            const badges = policyBadgeTokens(secret.policy).join(" ");
-            const updatedShort = secret.updatedAt.slice(0, 10);
-            return (
-              <Box key={`${secret.scope}:${secret.name}`} paddingX={1} flexDirection="row">
-                {isSelected ? (
-                  <Text color={theme.accent}>
-                    {"▶ "}
-                    {secret.name.slice(0, 30).padEnd(30)}{"  "}
-                    {secret.scope.padEnd(10)}
-                    {updatedShort.padEnd(14)}
-                    {badges}
-                  </Text>
-                ) : (
-                  <Text>
-                    {"  "}
-                    {secret.name.slice(0, 30).padEnd(30)}{"  "}
-                    {secret.scope.padEnd(10)}
-                    {updatedShort.padEnd(14)}
-                    {badges}
-                  </Text>
-                )}
-              </Box>
-            );
-          })
-        )}
+
+        <Box
+          borderStyle="round"
+          borderColor={theme.border}
+          flexDirection="column"
+          paddingX={1}
+          width={38}
+        >
+          <Text color={theme.accent} bold>Detail</Text>
+          {selectedSecret !== null ? (
+            <>
+              <Text bold color={theme.text}>{selectedSecret.name}</Text>
+              <Text color={theme.dim}>scope: {selectedSecret.scope}</Text>
+              <Text color={theme.dim}>
+                created: {selectedSecret.createdAt.slice(0, 10)}
+              </Text>
+              <Text color={theme.dim}>
+                updated: {selectedSecret.updatedAt.slice(0, 10)}
+              </Text>
+              <Text color={theme.dim}>Value: hidden</Text>
+              {policyBadgeTokens(selectedSecret.policy).length > 0 ? (
+                <Text color={theme.warning}>
+                  {policyBadgeTokens(selectedSecret.policy).join(" ")}
+                </Text>
+              ) : null}
+            </>
+          ) : (
+            <Text color={theme.dim}>No secret selected.</Text>
+          )}
+        </Box>
       </Box>
 
-      {selectedSecret !== null ? (
-        <Box borderStyle="round" flexDirection="column" padding={1} width={36}>
-          <Text bold>{selectedSecret.name}</Text>
-          <Text color={theme.dim}>scope: <Text>{selectedSecret.scope}</Text></Text>
-          <Text color={theme.dim}>created: <Text>{selectedSecret.createdAt.slice(0, 10)}</Text></Text>
-          <Text color={theme.dim}>updated: <Text>{selectedSecret.updatedAt.slice(0, 10)}</Text></Text>
-          <Text color={theme.dim}>Value: ●●●●●●●●</Text>
-          {policyBadgeTokens(selectedSecret.policy).length > 0 ? (
-            <Text color="yellow">{policyBadgeTokens(selectedSecret.policy).join(" ")}</Text>
-          ) : null}
-        </Box>
-      ) : null}
+      <Toolbar
+        buttons={props.toolbarButtons}
+        focused={props.toolbarFocused}
+        focusedIndex={props.toolbarIndex}
+      />
     </Box>
   );
 }
