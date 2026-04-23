@@ -43,6 +43,12 @@ import {
 } from "./app-exports.js";
 import { parseBulkSecretInput, type BulkImportPreview } from "./bulk-import.js";
 import { installTerminalLifecycle } from "./runtime.js";
+import {
+  createMouseRegistry,
+  MouseProvider,
+  type MouseContextValue,
+} from "./MouseContext.js";
+import { disableMouse, enableMouse, parseSgrMouse } from "./mouse.js";
 import { Button } from "./components/Button.js";
 import { CommandPalette, filterCommands, type PaletteCommand } from "./components/CommandPalette.js";
 import { Dialog } from "./components/Dialog.js";
@@ -573,6 +579,22 @@ function nextDialogFocus(
 // ---------------------------------------------------------------------
 
 export function TuiApp(props: AppProps): ReactElement {
+  const mouseRef = useRef<MouseContextValue | null>(null);
+  if (mouseRef.current === null) {
+    mouseRef.current = createMouseRegistry();
+  }
+  return (
+    <MouseProvider value={mouseRef.current}>
+      <TuiAppInner {...props} mouse={mouseRef.current} />
+    </MouseProvider>
+  );
+}
+
+interface TuiAppInnerProps extends AppProps {
+  readonly mouse: MouseContextValue;
+}
+
+function TuiAppInner(props: TuiAppInnerProps): ReactElement {
   const { exit } = useApp();
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [region, setRegion] = useState<Region>("tabs");
@@ -911,8 +933,8 @@ export function TuiApp(props: AppProps): ReactElement {
           ? policiesToolbar
           : [];
 
-  const activateSecretsToolbar = (): void => {
-    const btn = secretsToolbar[toolbarFocus];
+  const activateSecretsToolbar = (index: number = toolbarFocus): void => {
+    const btn = secretsToolbar[index];
     if (btn === undefined || btn.disabled === true) {
       return;
     }
@@ -994,8 +1016,8 @@ export function TuiApp(props: AppProps): ReactElement {
     }
   };
 
-  const activateAuditToolbar = (): void => {
-    const btn = auditToolbar[toolbarFocus];
+  const activateAuditToolbar = (index: number = toolbarFocus): void => {
+    const btn = auditToolbar[index];
     if (btn === undefined || btn.disabled === true) {
       return;
     }
@@ -1024,8 +1046,8 @@ export function TuiApp(props: AppProps): ReactElement {
     }
   };
 
-  const activatePoliciesToolbar = (): void => {
-    const btn = policiesToolbar[toolbarFocus];
+  const activatePoliciesToolbar = (index: number = toolbarFocus): void => {
+    const btn = policiesToolbar[index];
     if (btn === undefined || btn.disabled === true || selectedSecretRow === null) {
       return;
     }
@@ -1051,6 +1073,136 @@ export function TuiApp(props: AppProps): ReactElement {
       default:
         return;
     }
+  };
+
+  const handleToolbarClick = (index: number): void => {
+    setToolbarFocus(index);
+    setRegion("toolbar");
+    if (screen === "secrets") {
+      activateSecretsToolbar(index);
+    } else if (screen === "audit") {
+      activateAuditToolbar(index);
+    } else if (screen === "policies") {
+      activatePoliciesToolbar(index);
+    }
+  };
+
+  const handleDialogAction = (d: DialogState, index: number): void => {
+    if (d.kind === "add" || d.kind === "rotate") {
+      if (index === 0) {
+        clearSecretValue();
+        setDialog(null);
+        setRegion("toolbar");
+        return;
+      }
+      void saveSingleSecret(d);
+      return;
+    }
+    if (d.kind === "delete") {
+      if (index === 0) {
+        setDialog(null);
+        setRegion("toolbar");
+        return;
+      }
+      void deleteSecret(d);
+      return;
+    }
+    if (d.kind === "bulk") {
+      if (index === 0) {
+        clearBulkBuffer();
+        setDialog(null);
+        setRegion("toolbar");
+        return;
+      }
+      if (d.preview === null && d.buffer.length === 0) {
+        void doPaste((text) => {
+          setDialog((prev) => {
+            if (prev === null || prev.kind !== "bulk") {
+              return prev;
+            }
+            return { ...prev, buffer: text, preview: null };
+          });
+        });
+        return;
+      }
+      if (d.preview === null && d.buffer.length > 0) {
+        setDialog({ ...d, preview: parseBulkSecretInput(d.buffer) });
+        return;
+      }
+      void saveBulkPreview(d);
+      return;
+    }
+    if (d.kind === "filter") {
+      if (index === 0) {
+        setDialog(null);
+        setRegion("toolbar");
+        return;
+      }
+      if (d.target === "secrets") {
+        setSecretFilter(d.value);
+      } else {
+        setAuditFilter(d.value);
+      }
+      setDialog(null);
+      setRegion("toolbar");
+      return;
+    }
+    if (d.kind === "policy") {
+      if (d.awaitingConfirm) {
+        if (index === 0) {
+          setDialog(null);
+          setRegion("toolbar");
+        } else if (index === 1) {
+          setDialog({ ...d, awaitingConfirm: false });
+        } else {
+          void savePolicyDraft(d, true);
+        }
+        return;
+      }
+      if (index === 0) {
+        setDialog(null);
+        setRegion("toolbar");
+        return;
+      }
+      void savePolicyDraft(d, false);
+    }
+  };
+
+  const handleTabClick = (index: number): void => {
+    const targetLabel = TAB_LABELS[index];
+    if (targetLabel === undefined) {
+      return;
+    }
+    setScreen(targetLabel.toLowerCase() as Screen);
+    setTabFocus(index);
+    setRegion("body");
+  };
+
+  const handleSecretRowClick = (index: number): void => {
+    setSelectedSecret(index);
+    setRegion("body");
+  };
+
+  const handleAuditRowClick = (index: number): void => {
+    setSelectedAudit(index);
+    setRegion("body");
+    if (!auditDetail && filteredAudit[index] !== undefined) {
+      setAuditDetail(true);
+    }
+  };
+
+  const handleSecretScroll = (delta: number): void => {
+    setSelectedSecret((i) => {
+      const max = Math.max(0, filteredSecrets.length - 1);
+      return Math.max(0, Math.min(max, i + delta));
+    });
+  };
+
+  const handleAuditScroll = (delta: number): void => {
+    setSelectedAudit((i) => {
+      const max = Math.max(0, filteredAudit.length - 1);
+      return Math.max(0, Math.min(max, i + delta));
+    });
   };
 
   const activateToolbar = (): void => {
@@ -1211,8 +1363,22 @@ export function TuiApp(props: AppProps): ReactElement {
     { id: "window", hasPaste: false },
   ];
 
-  // ============ KEYBOARD ROUTER ============
+  // ============ INPUT ROUTER (keyboard + mouse) ============
   useInput((input, key) => {
+    // Mouse events arrive as raw CSI bodies (Ink strips the leading ESC).
+    // Detect them first so they don't fall through to keyboard handlers.
+    const mouseEvent = parseSgrMouse(input);
+    if (mouseEvent !== null) {
+      if (mouseEvent.kind === "press") {
+        props.mouse.dispatchClick(mouseEvent.col, mouseEvent.row);
+      } else if (mouseEvent.kind === "scrollUp") {
+        props.mouse.dispatchScroll(mouseEvent.col, mouseEvent.row, -1);
+      } else if (mouseEvent.kind === "scrollDown") {
+        props.mouse.dispatchScroll(mouseEvent.col, mouseEvent.row, 1);
+      }
+      return;
+    }
+
     if (key.ctrl === true && input === "c") {
       exit();
       return;
@@ -1863,6 +2029,7 @@ export function TuiApp(props: AppProps): ReactElement {
         activeIndex={Math.max(0, screenIndex)}
         focusedIndex={tabFocus}
         isFocused={region === "tabs"}
+        onTabClick={handleTabClick}
       />
 
       {screen === "dashboard" && snapshot !== null ? (
@@ -1879,6 +2046,9 @@ export function TuiApp(props: AppProps): ReactElement {
           toolbarFocused={region === "toolbar"}
           toolbarIndex={toolbarFocus}
           toolbarButtons={secretsToolbar}
+          onRowClick={handleSecretRowClick}
+          onScroll={handleSecretScroll}
+          onToolbarClick={handleToolbarClick}
         />
       ) : null}
 
@@ -1893,6 +2063,9 @@ export function TuiApp(props: AppProps): ReactElement {
           toolbarFocused={region === "toolbar"}
           toolbarIndex={toolbarFocus}
           toolbarButtons={auditToolbar}
+          onRowClick={handleAuditRowClick}
+          onScroll={handleAuditScroll}
+          onToolbarClick={handleToolbarClick}
         />
       ) : null}
 
@@ -1907,6 +2080,9 @@ export function TuiApp(props: AppProps): ReactElement {
           toolbarFocused={region === "toolbar"}
           toolbarIndex={toolbarFocus}
           toolbarButtons={policiesToolbar}
+          onRowClick={handleSecretRowClick}
+          onScroll={handleSecretScroll}
+          onToolbarClick={handleToolbarClick}
         />
       ) : null}
 
@@ -1920,6 +2096,13 @@ export function TuiApp(props: AppProps): ReactElement {
           }}
           commands={paletteCommands}
           selectedIndex={paletteIndex}
+          onItemClick={(index) => {
+            const cmd = filteredPaletteCommands[index];
+            if (cmd !== undefined) {
+              setPaletteIndex(index);
+              runPaletteCommand(cmd.id);
+            }
+          }}
         />
       ) : null}
 
@@ -1948,6 +2131,7 @@ export function TuiApp(props: AppProps): ReactElement {
           focusedAction={d.focus.kind === "actions" ? d.focus.index : 0}
           actionsFocused={d.focus.kind === "actions"}
           errorText={d.error}
+          onAction={(index) => handleDialogAction(d, index)}
         >
           {d.kind === "add" ? (
             <FormField
@@ -1984,6 +2168,7 @@ export function TuiApp(props: AppProps): ReactElement {
           actions={actions}
           focusedAction={d.focus.kind === "actions" ? d.focus.index : 1}
           actionsFocused
+          onAction={(index) => handleDialogAction(d, index)}
         />
       );
     }
@@ -2004,6 +2189,7 @@ export function TuiApp(props: AppProps): ReactElement {
             focusedAction={d.focus.kind === "actions" ? d.focus.index : 1}
             actionsFocused
             errorText={d.error}
+            onAction={(index) => handleDialogAction(d, index)}
           >
             <Text color={theme.dim}>
               {String(lines)} lines captured ({String(d.buffer.length)} chars, hidden)
@@ -2023,6 +2209,7 @@ export function TuiApp(props: AppProps): ReactElement {
           focusedAction={d.focus.kind === "actions" ? d.focus.index : 1}
           actionsFocused
           errorText={d.error}
+          onAction={(index) => handleDialogAction(d, index)}
         >
           {d.preview.added.map((entry) => (
             <Text key={`add:${String(entry.line)}:${entry.name}`} color={theme.text}>
@@ -2051,6 +2238,7 @@ export function TuiApp(props: AppProps): ReactElement {
             actions={actions}
             focusedAction={d.focus.kind === "actions" ? d.focus.index : 1}
             actionsFocused
+            onAction={(index) => handleDialogAction(d, index)}
           />
         );
       }
@@ -2070,6 +2258,7 @@ export function TuiApp(props: AppProps): ReactElement {
           focusedAction={d.focus.kind === "actions" ? d.focus.index : 0}
           actionsFocused={d.focus.kind === "actions"}
           errorText={d.error}
+          onAction={(index) => handleDialogAction(d, index)}
         >
           <Text color={theme.dim}>
             Preview badges: <Text color={theme.warning}>{badges.join(" ") || "none"}</Text>
@@ -2136,6 +2325,7 @@ export function TuiApp(props: AppProps): ReactElement {
         actions={actions}
         focusedAction={d.focus.kind === "actions" ? d.focus.index : 0}
         actionsFocused={d.focus.kind === "actions"}
+        onAction={(index) => handleDialogAction(d, index)}
       >
         <FormField
           label="Query"
@@ -2168,14 +2358,25 @@ export async function runTuiApp(deps: CliDeps, options: RunTuiOptions = {}): Pro
     stderr,
     exitOnCtrlC: false,
   });
+  if (stdout.isTTY === true) {
+    enableMouse(stdout);
+  }
   const lifecycle = installTerminalLifecycle({
     stdin,
     processRef: options.processRef ?? process,
     onSignal: () => instance.unmount(),
+    beforeSignal: () => {
+      if (stdout.isTTY === true) {
+        disableMouse(stdout);
+      }
+    },
   });
   try {
     await instance.waitUntilExit();
   } finally {
+    if (stdout.isTTY === true) {
+      disableMouse(stdout);
+    }
     lifecycle.restore();
   }
 }

@@ -31,6 +31,9 @@ interface PoliciesScreenProps {
   readonly toolbarFocused: boolean;
   readonly toolbarIndex: number;
   readonly toolbarButtons: readonly ToolbarButton[];
+  readonly onRowClick?: (index: number) => void;
+  readonly onScroll?: (delta: number) => void;
+  readonly onToolbarClick?: (index: number) => void;
 }
 
 export function PoliciesScreen(props: PoliciesScreenProps): ReactElement {
@@ -49,15 +52,16 @@ export function PoliciesScreen(props: PoliciesScreenProps): ReactElement {
       <Box flexDirection="row" gap={1}>
         <Box
           borderStyle="round"
-          borderColor={theme.border}
+          borderColor={props.bodyFocused ? theme.borderActive : theme.border}
+          backgroundColor={theme.backgroundPanel}
           flexDirection="column"
           flexGrow={1}
         >
           <Box paddingX={1}>
-            <Text color={theme.accent} bold>Secrets</Text>
+            <Text color={theme.primary} bold>Secrets</Text>
           </Box>
           <Box paddingX={1}>
-            <Text color={theme.dim} bold>
+            <Text color={theme.textMuted} bold>
               {"  "}
               {"NAME".padEnd(30)}
               {"  "}
@@ -70,11 +74,15 @@ export function PoliciesScreen(props: PoliciesScreenProps): ReactElement {
             selectedIndex={selectedIndex}
             isFocused={props.bodyFocused}
             emptyText="No secrets."
+            idPrefix="policies"
+            {...(props.onRowClick !== undefined ? { onItemClick: props.onRowClick } : {})}
+            {...(props.onScroll !== undefined ? { onScroll: props.onScroll } : {})}
           />
         </Box>
         <Box
           borderStyle="round"
           borderColor={theme.border}
+          backgroundColor={theme.backgroundPanel}
           flexDirection="column"
           paddingX={1}
           width={48}
@@ -84,14 +92,14 @@ export function PoliciesScreen(props: PoliciesScreenProps): ReactElement {
               ⚠ Strict mode: wildcards rejected
             </Text>
           ) : null}
-          <Text color={theme.accent} bold>
+          <Text color={theme.primary} bold>
             {selectedSecret !== null
               ? `Policy for ${selectedSecret.name}`
               : "Policy"}
           </Text>
           {selectedSecret !== null ? (
             <>
-              <Text color={theme.dim}>Allowed HTTP hosts</Text>
+              <Text color={theme.textMuted}>Allowed HTTP hosts</Text>
               {policyView.hosts.length > 0 ? (
                 policyView.hosts.map((host) => (
                   <Text key={`host:${host}`} color={theme.text}>
@@ -100,9 +108,9 @@ export function PoliciesScreen(props: PoliciesScreenProps): ReactElement {
                   </Text>
                 ))
               ) : (
-                <Text color={theme.dim}>  none</Text>
+                <Text color={theme.textMuted}>  none</Text>
               )}
-              <Text color={theme.dim}>Allowed commands</Text>
+              <Text color={theme.textMuted}>Allowed commands</Text>
               {policyView.commands.length > 0 ? (
                 policyView.commands.map((command) => (
                   <Text key={`cmd:${command}`} color={theme.text}>
@@ -111,9 +119,9 @@ export function PoliciesScreen(props: PoliciesScreenProps): ReactElement {
                   </Text>
                 ))
               ) : (
-                <Text color={theme.dim}>  none</Text>
+                <Text color={theme.textMuted}>  none</Text>
               )}
-              <Text color={theme.dim}>Allowed env vars</Text>
+              <Text color={theme.textMuted}>Allowed env vars</Text>
               {policyView.envs.length > 0 ? (
                 policyView.envs.map((env) => (
                   <Text key={`env:${env}`} color={theme.text}>
@@ -122,14 +130,14 @@ export function PoliciesScreen(props: PoliciesScreenProps): ReactElement {
                   </Text>
                 ))
               ) : (
-                <Text color={theme.dim}>  none</Text>
+                <Text color={theme.textMuted}>  none</Text>
               )}
-              <Text color={theme.dim}>
+              <Text color={theme.textMuted}>
                 Rate limit: <Text color={theme.text}>{policyView.rate}</Text>
               </Text>
             </>
           ) : (
-            <Text color={theme.dim}>No secret selected.</Text>
+            <Text color={theme.textMuted}>No secret selected.</Text>
           )}
         </Box>
       </Box>
@@ -137,6 +145,8 @@ export function PoliciesScreen(props: PoliciesScreenProps): ReactElement {
         buttons={props.toolbarButtons}
         focused={props.toolbarFocused}
         focusedIndex={props.toolbarIndex}
+        idPrefix="policies-tb"
+        {...(props.onToolbarClick !== undefined ? { onButtonClick: props.onToolbarClick } : {})}
       />
     </Box>
   );

@@ -15,6 +15,9 @@ interface AuditScreenProps {
   readonly toolbarFocused: boolean;
   readonly toolbarIndex: number;
   readonly toolbarButtons: readonly ToolbarButton[];
+  readonly onRowClick?: (index: number) => void;
+  readonly onScroll?: (delta: number) => void;
+  readonly onToolbarClick?: (index: number) => void;
 }
 
 export function AuditScreen(props: AuditScreenProps): ReactElement {
@@ -27,10 +30,11 @@ export function AuditScreen(props: AuditScreenProps): ReactElement {
         <Box
           borderStyle="round"
           borderColor={theme.border}
+          backgroundColor={theme.backgroundPanel}
           flexDirection="column"
           paddingX={1}
         >
-          <Text color={theme.accent} bold>Audit detail</Text>
+          <Text color={theme.primary} bold>Audit detail</Text>
           {lines.map((line, index) => (
             <Text key={`audit-detail:${String(index)}`} color={theme.text}>
               {line}
@@ -41,6 +45,8 @@ export function AuditScreen(props: AuditScreenProps): ReactElement {
           buttons={props.toolbarButtons}
           focused={props.toolbarFocused}
           focusedIndex={props.toolbarIndex}
+          idPrefix="audit-tb"
+          {...(props.onToolbarClick !== undefined ? { onButtonClick: props.onToolbarClick } : {})}
         />
       </Box>
     );
@@ -55,20 +61,21 @@ export function AuditScreen(props: AuditScreenProps): ReactElement {
     <Box flexDirection="column" paddingX={1} gap={1}>
       <Box
         borderStyle="round"
-        borderColor={theme.border}
+        borderColor={props.bodyFocused ? theme.borderActive : theme.border}
+        backgroundColor={theme.backgroundPanel}
         flexDirection="column"
       >
         <Box paddingX={1}>
-          <Text color={theme.accent} bold>Audit log</Text>
+          <Text color={theme.primary} bold>Audit log</Text>
         </Box>
         {filter.length > 0 ? (
           <Box paddingX={1}>
-            <Text color={theme.dim}>Filter: </Text>
-            <Text color={theme.accent}>{filter}</Text>
+            <Text color={theme.textMuted}>Filter: </Text>
+            <Text color={theme.primary}>{filter}</Text>
           </Box>
         ) : null}
         <Box paddingX={1}>
-          <Text color={theme.dim} bold>
+          <Text color={theme.textMuted} bold>
             {"  "}
             {"OUTCOME".padEnd(8)}
             {"TIMESTAMP".padEnd(26)}
@@ -81,12 +88,17 @@ export function AuditScreen(props: AuditScreenProps): ReactElement {
           selectedIndex={selectedIndex}
           isFocused={props.bodyFocused}
           emptyText="No audit entries yet."
+          idPrefix="audit"
+          {...(props.onRowClick !== undefined ? { onItemClick: props.onRowClick } : {})}
+          {...(props.onScroll !== undefined ? { onScroll: props.onScroll } : {})}
         />
       </Box>
       <Toolbar
         buttons={props.toolbarButtons}
         focused={props.toolbarFocused}
         focusedIndex={props.toolbarIndex}
+        idPrefix="audit-tb"
+        {...(props.onToolbarClick !== undefined ? { onButtonClick: props.onToolbarClick } : {})}
       />
     </Box>
   );

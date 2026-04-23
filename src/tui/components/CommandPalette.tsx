@@ -15,6 +15,7 @@ interface CommandPaletteProps {
   readonly onQueryChange: (value: string) => void;
   readonly commands: readonly PaletteCommand[];
   readonly selectedIndex: number;
+  readonly onItemClick?: (index: number) => void;
 }
 
 function matchesQuery(command: PaletteCommand, query: string): boolean {
@@ -45,14 +46,15 @@ export function CommandPalette(props: CommandPaletteProps): ReactElement {
   return (
     <Box
       borderStyle="round"
-      borderColor={theme.border}
+      borderColor={theme.borderActive}
+      backgroundColor={theme.backgroundPanel}
       flexDirection="column"
       padding={1}
       marginTop={1}
     >
-      <Text color={theme.accent} bold>Command palette</Text>
+      <Text color={theme.primary} bold>Command palette</Text>
       <Box marginTop={1}>
-        <Text color={theme.dim}>Search: </Text>
+        <Text color={theme.textMuted}>Search: </Text>
         <TextInput value={props.query} focus onChange={props.onQueryChange} />
       </Box>
       <Box marginTop={1} flexDirection="column">
@@ -61,6 +63,8 @@ export function CommandPalette(props: CommandPaletteProps): ReactElement {
           selectedIndex={props.selectedIndex}
           isFocused
           emptyText="No matching commands."
+          idPrefix="palette"
+          {...(props.onItemClick !== undefined ? { onItemClick: props.onItemClick } : {})}
         />
       </Box>
     </Box>

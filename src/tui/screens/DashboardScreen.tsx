@@ -25,11 +25,12 @@ function StatCard(props: {
     <Box
       borderStyle="round"
       borderColor={theme.border}
+      backgroundColor={theme.backgroundPanel}
       flexDirection="column"
       paddingX={1}
       width={22}
     >
-      <Text color={theme.dim}>{props.label}</Text>
+      <Text color={theme.textMuted}>{props.label}</Text>
       {props.children}
     </Box>
   );
@@ -67,12 +68,13 @@ export function DashboardScreen(props: DashboardScreenProps): ReactElement {
       <Box
         borderStyle="round"
         borderColor={theme.border}
+        backgroundColor={theme.backgroundPanel}
         flexDirection="column"
         paddingX={1}
       >
         <Text color={theme.text} bold>Recent activity</Text>
         {recent.length === 0 ? (
-          <Text color={theme.dim}>No activity yet.</Text>
+          <Text color={theme.textMuted}>No activity yet.</Text>
         ) : (
           recent.map((entry) => (
             <Box key={entry.request_id} flexDirection="row">
@@ -80,12 +82,12 @@ export function DashboardScreen(props: DashboardScreenProps): ReactElement {
                 {entry.outcome === "allowed" ? "✓ " : "✗ "}
               </Text>
               <Box width={22}>
-                <Text color={theme.dim}>{entry.ts.slice(0, 19).replace("T", " ")}</Text>
+                <Text color={theme.textMuted}>{entry.ts.slice(0, 19).replace("T", " ")}</Text>
               </Box>
               <Box width={28}>
                 <Text color={theme.text}>{entry.secret_name}</Text>
               </Box>
-              <Text color={theme.dim}>{entry.target}</Text>
+              <Text color={theme.textMuted}>{entry.target}</Text>
             </Box>
           ))
         )}

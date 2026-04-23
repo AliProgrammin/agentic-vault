@@ -11,22 +11,24 @@ interface DialogProps {
   readonly focusedAction: number;
   readonly actionsFocused: boolean;
   readonly errorText?: string | null;
+  readonly onAction?: (index: number) => void;
 }
 
 export function Dialog(props: DialogProps): ReactElement {
   return (
     <Box
       borderStyle="round"
-      borderColor={theme.border}
+      borderColor={theme.borderActive}
+      backgroundColor={theme.backgroundPanel}
       flexDirection="column"
       padding={1}
       marginTop={1}
     >
-      <Text color={theme.accent} bold>
+      <Text color={theme.primary} bold>
         {props.title}
       </Text>
       {props.description !== undefined ? (
-        <Text color={theme.dim}>{props.description}</Text>
+        <Text color={theme.textMuted}>{props.description}</Text>
       ) : null}
       {props.children !== undefined ? (
         <Box flexDirection="column" marginTop={1}>
@@ -43,6 +45,8 @@ export function Dialog(props: DialogProps): ReactElement {
           buttons={props.actions}
           focused={props.actionsFocused}
           focusedIndex={props.focusedAction}
+          idPrefix="dialog-action"
+          {...(props.onAction !== undefined ? { onButtonClick: props.onAction } : {})}
         />
       </Box>
     </Box>

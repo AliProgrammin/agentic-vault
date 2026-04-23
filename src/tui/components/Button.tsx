@@ -14,26 +14,34 @@ export function Button(props: ButtonProps): ReactElement {
   const label = `  ${props.label}  `;
   if (props.disabled === true) {
     return (
-      <Text backgroundColor={theme.surface} color={theme.dim}>
+      <Text backgroundColor={theme.backgroundPanel} color={theme.textMuted}>
         {label}
       </Text>
     );
   }
   if (props.focused) {
-    const bg =
-      variant === "danger"
-        ? theme.danger
-        : variant === "success"
-          ? theme.success
-          : theme.accent;
+    if (variant === "danger") {
+      return (
+        <Text backgroundColor={theme.danger} color="white" bold>
+          {label}
+        </Text>
+      );
+    }
+    if (variant === "success") {
+      return (
+        <Text backgroundColor={theme.success} color={theme.background} bold>
+          {label}
+        </Text>
+      );
+    }
     return (
-      <Text backgroundColor={bg} color="white" bold>
+      <Text backgroundColor={theme.primary} color={theme.background} bold>
         {label}
       </Text>
     );
   }
   return (
-    <Text backgroundColor={theme.surfaceElevated} color={theme.text}>
+    <Text backgroundColor={theme.backgroundElement} color={theme.text}>
       {label}
     </Text>
   );

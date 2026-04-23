@@ -15,6 +15,7 @@ export interface TerminalLifecycleOptions {
   readonly stdin: RawModeStdin;
   readonly processRef: SignalProcess;
   readonly onSignal: () => void;
+  readonly beforeSignal?: () => void;
 }
 
 export function installTerminalLifecycle(
@@ -26,6 +27,7 @@ export function installTerminalLifecycle(
       return;
     }
     restored = true;
+    opts.beforeSignal?.();
     opts.stdin.setRawMode?.(false);
     opts.processRef.off("SIGINT", handleSignal);
     opts.processRef.off("SIGTERM", handleSignal);

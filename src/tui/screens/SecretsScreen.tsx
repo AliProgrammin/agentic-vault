@@ -23,6 +23,9 @@ interface SecretsScreenProps {
   readonly toolbarFocused: boolean;
   readonly toolbarIndex: number;
   readonly toolbarButtons: readonly ToolbarButton[];
+  readonly onRowClick?: (index: number) => void;
+  readonly onScroll?: (delta: number) => void;
+  readonly onToolbarClick?: (index: number) => void;
 }
 
 export function SecretsScreen(props: SecretsScreenProps): ReactElement {
@@ -42,21 +45,22 @@ export function SecretsScreen(props: SecretsScreenProps): ReactElement {
       <Box flexDirection="row" gap={1}>
         <Box
           borderStyle="round"
-          borderColor={theme.border}
+          borderColor={props.bodyFocused ? theme.borderActive : theme.border}
+          backgroundColor={theme.backgroundPanel}
           flexDirection="column"
           flexGrow={1}
         >
           <Box paddingX={1}>
-            <Text color={theme.accent} bold>Secrets</Text>
+            <Text color={theme.primary} bold>Secrets</Text>
           </Box>
           {filter.length > 0 ? (
             <Box paddingX={1}>
-              <Text color={theme.dim}>Filter: </Text>
-              <Text color={theme.accent}>{filter}</Text>
+              <Text color={theme.textMuted}>Filter: </Text>
+              <Text color={theme.primary}>{filter}</Text>
             </Box>
           ) : null}
           <Box paddingX={1}>
-            <Text color={theme.dim} bold>
+            <Text color={theme.textMuted} bold>
               {"  "}
               {"NAME".padEnd(30)}
               {"  "}
@@ -70,28 +74,32 @@ export function SecretsScreen(props: SecretsScreenProps): ReactElement {
             selectedIndex={selectedIndex}
             isFocused={props.bodyFocused}
             emptyText="No secrets yet. Focus the toolbar and press Enter on Add secret to create one."
+            idPrefix="secrets"
+            {...(props.onRowClick !== undefined ? { onItemClick: props.onRowClick } : {})}
+            {...(props.onScroll !== undefined ? { onScroll: props.onScroll } : {})}
           />
         </Box>
 
         <Box
           borderStyle="round"
           borderColor={theme.border}
+          backgroundColor={theme.backgroundPanel}
           flexDirection="column"
           paddingX={1}
           width={38}
         >
-          <Text color={theme.accent} bold>Detail</Text>
+          <Text color={theme.primary} bold>Detail</Text>
           {selectedSecret !== null ? (
             <>
               <Text bold color={theme.text}>{selectedSecret.name}</Text>
-              <Text color={theme.dim}>scope: {selectedSecret.scope}</Text>
-              <Text color={theme.dim}>
+              <Text color={theme.textMuted}>scope: {selectedSecret.scope}</Text>
+              <Text color={theme.textMuted}>
                 created: {selectedSecret.createdAt.slice(0, 10)}
               </Text>
-              <Text color={theme.dim}>
+              <Text color={theme.textMuted}>
                 updated: {selectedSecret.updatedAt.slice(0, 10)}
               </Text>
-              <Text color={theme.dim}>Value: hidden</Text>
+              <Text color={theme.textMuted}>Value: hidden</Text>
               {policyBadgeTokens(selectedSecret.policy).length > 0 ? (
                 <Text color={theme.warning}>
                   {policyBadgeTokens(selectedSecret.policy).join(" ")}
@@ -99,7 +107,7 @@ export function SecretsScreen(props: SecretsScreenProps): ReactElement {
               ) : null}
             </>
           ) : (
-            <Text color={theme.dim}>No secret selected.</Text>
+            <Text color={theme.textMuted}>No secret selected.</Text>
           )}
         </Box>
       </Box>
@@ -108,6 +116,8 @@ export function SecretsScreen(props: SecretsScreenProps): ReactElement {
         buttons={props.toolbarButtons}
         focused={props.toolbarFocused}
         focusedIndex={props.toolbarIndex}
+        idPrefix="secrets-tb"
+        {...(props.onToolbarClick !== undefined ? { onButtonClick: props.onToolbarClick } : {})}
       />
     </Box>
   );

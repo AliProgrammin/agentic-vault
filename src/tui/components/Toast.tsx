@@ -13,10 +13,10 @@ export function Toast(props: ToastProps): ReactElement {
       ? theme.danger
       : props.kind === "success"
         ? theme.success
-        : theme.accent;
+        : theme.primary;
   return (
     <Box paddingX={1}>
-      <Text backgroundColor={theme.surfaceElevated} color={color}>
+      <Text backgroundColor={theme.backgroundElement} color={color}>
         {`  ${props.text}  `}
       </Text>
     </Box>
