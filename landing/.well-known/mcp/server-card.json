@@ -17,6 +17,8 @@
   },
   "links": {
     "homepage": "https://agenticvault.madhoob.dev",
-    "requestAccess": "mailto:haaamcar@gmail.com?subject=AgenticVault"
+    "source": "https://github.com/AliProgrammin/agentic-vault",
+    "issues": "https://github.com/AliProgrammin/agentic-vault/issues",
+    "commercialLicense": "mailto:haaamcar@gmail.com?subject=AgenticVault%20commercial%20license"
   }
 }
