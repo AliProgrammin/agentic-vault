@@ -679,15 +679,13 @@ export function TuiApp(props: AppProps): ReactElement {
     return () => watcher.close();
   }, [session]);
 
-  // Reset body focus/indices when switching screens
+  // Reset transient per-screen state when switching screens.
+  // Do NOT touch `region` here — the user explicitly chose their focus
+  // region (tabs on mount, or whatever the Tab/Enter handlers set). This
+  // effect fires on mount too, so resetting region would clobber the
+  // initial "tabs" focus and break arrow navigation on launch.
   useEffect(() => {
     setAuditDetail(false);
-    if (screen === "dashboard") {
-      // Dashboard has no interactive body for now
-      setRegion("body");
-    } else {
-      setRegion("body");
-    }
     setToolbarFocus(0);
   }, [screen]);
 
