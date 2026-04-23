@@ -1367,14 +1367,19 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
   useInput((input, key) => {
     // Mouse events arrive as raw CSI bodies (Ink strips the leading ESC).
     // Detect them first so they don't fall through to keyboard handlers.
+    // Mouse coords are 1-based (terminal origin (1,1)); yoga/Ink layout is
+    // 0-based. With alt-screen mode enabled, Ink renders at terminal (1,1),
+    // so subtracting 1 from each axis maps cleanly into the zone registry.
     const mouseEvent = parseSgrMouse(input);
     if (mouseEvent !== null) {
+      const col = mouseEvent.col - 1;
+      const row = mouseEvent.row - 1;
       if (mouseEvent.kind === "press") {
-        props.mouse.dispatchClick(mouseEvent.col, mouseEvent.row);
+        props.mouse.dispatchClick(col, row);
       } else if (mouseEvent.kind === "scrollUp") {
-        props.mouse.dispatchScroll(mouseEvent.col, mouseEvent.row, -1);
+        props.mouse.dispatchScroll(col, row, -1);
       } else if (mouseEvent.kind === "scrollDown") {
-        props.mouse.dispatchScroll(mouseEvent.col, mouseEvent.row, 1);
+        props.mouse.dispatchScroll(col, row, 1);
       }
       return;
     }
