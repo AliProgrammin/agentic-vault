@@ -575,7 +575,7 @@ function nextDialogFocus(
 export function TuiApp(props: AppProps): ReactElement {
   const { exit } = useApp();
   const [screen, setScreen] = useState<Screen>("dashboard");
-  const [region, setRegion] = useState<Region>("body");
+  const [region, setRegion] = useState<Region>("tabs");
   const [tabFocus, setTabFocus] = useState(0);
   const [toolbarFocus, setToolbarFocus] = useState(0);
   const [session, setSession] = useState<TuiSession | null>(null);
