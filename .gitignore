@@ -22,3 +22,6 @@ coverage/
 # Editor
 .vscode/
 .idea/
+
+# Local MCP client config (contains absolute paths)
+.mcp.json
