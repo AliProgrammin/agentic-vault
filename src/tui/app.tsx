@@ -991,7 +991,9 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
             kind: "delete",
             name: selectedSecretRow.name,
             scope: selectedSecretRow.scope,
-            focus: { kind: "actions", index: 1 },
+            // Cancel focused by default — Delete is destructive; require an
+            // explicit → to move to it.
+            focus: { kind: "actions", index: 0 },
           });
           setRegion("dialog");
         }
@@ -1317,7 +1319,7 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
             kind: "delete",
             name: selectedSecretRow.name,
             scope: selectedSecretRow.scope,
-            focus: { kind: "actions", index: 1 },
+            focus: { kind: "actions", index: 0 },
           });
           setRegion("dialog");
         }
@@ -2102,84 +2104,82 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
         onTabClick={handleTabClick}
       />
       <Box flexGrow={1} flexDirection="column">
-
-      {screen === "dashboard" && snapshot !== null ? (
-        <DashboardScreen dashboard={snapshot.dashboard} audit={snapshot.audit} />
-      ) : null}
-
-      {screen === "secrets" ? (
-        <SecretsScreen
-          secrets={filteredSecrets}
-          selectedIndex={selectedSecret}
-          filter={secretFilter}
-          selectedSecret={selectedSecretRow}
-          bodyFocused={region === "body"}
-          toolbarFocused={region === "toolbar"}
-          toolbarIndex={toolbarFocus}
-          toolbarButtons={secretsToolbar}
-          onRowClick={handleSecretRowClick}
-          onScroll={handleSecretScroll}
-          onToolbarClick={handleToolbarClick}
-        />
-      ) : null}
-
-      {screen === "audit" ? (
-        <AuditScreen
-          entries={filteredAudit}
-          selectedIndex={selectedAudit}
-          filter={auditFilter}
-          auditDetail={auditDetail}
-          model={selectedAuditEntry !== null ? buildAuditDetailModelForTui(selectedAuditEntry) : null}
-          bodyFocused={region === "body"}
-          toolbarFocused={region === "toolbar"}
-          toolbarIndex={toolbarFocus}
-          toolbarButtons={auditToolbar}
-          onRowClick={handleAuditRowClick}
-          onScroll={handleAuditScroll}
-          onToolbarClick={handleToolbarClick}
-        />
-      ) : null}
-
-      {screen === "policies" ? (
-        <PoliciesScreen
-          secrets={filteredSecrets}
-          selectedIndex={selectedSecret}
-          selectedSecret={selectedSecretRow}
-          policyView={policyView}
-          strictMode={strictMode}
-          bodyFocused={region === "body"}
-          toolbarFocused={region === "toolbar"}
-          toolbarIndex={toolbarFocus}
-          toolbarButtons={policiesToolbar}
-          onRowClick={handleSecretRowClick}
-          onScroll={handleSecretScroll}
-          onToolbarClick={handleToolbarClick}
-        />
-      ) : null}
-
-      {dialog !== null ? <DialogOverlay dialog={dialog} /> : null}
-      {region === "palette" ? (
-        <CommandPalette
-          query={paletteQuery}
-          onQueryChange={(q) => {
-            setPaletteQuery(q);
-            setPaletteIndex(0);
-          }}
-          commands={paletteCommands}
-          selectedIndex={paletteIndex}
-          onItemClick={(index) => {
-            const cmd = filteredPaletteCommands[index];
-            if (cmd !== undefined) {
-              setPaletteIndex(index);
-              runPaletteCommand(cmd.id);
-            }
-          }}
-        />
-      ) : null}
-
-      {toast !== null ? (
-        <Toast kind={toast.kind} text={toast.text} />
-      ) : null}
+        {dialog !== null ? (
+          <DialogOverlay dialog={dialog} />
+        ) : region === "palette" ? (
+          <CommandPalette
+            query={paletteQuery}
+            onQueryChange={(q) => {
+              setPaletteQuery(q);
+              setPaletteIndex(0);
+            }}
+            commands={paletteCommands}
+            selectedIndex={paletteIndex}
+            onItemClick={(index) => {
+              const cmd = filteredPaletteCommands[index];
+              if (cmd !== undefined) {
+                setPaletteIndex(index);
+                runPaletteCommand(cmd.id);
+              }
+            }}
+          />
+        ) : (
+          <>
+            {screen === "dashboard" && snapshot !== null ? (
+              <DashboardScreen dashboard={snapshot.dashboard} audit={snapshot.audit} />
+            ) : null}
+            {screen === "secrets" ? (
+              <SecretsScreen
+                secrets={filteredSecrets}
+                selectedIndex={selectedSecret}
+                filter={secretFilter}
+                selectedSecret={selectedSecretRow}
+                bodyFocused={region === "body"}
+                toolbarFocused={region === "toolbar"}
+                toolbarIndex={toolbarFocus}
+                toolbarButtons={secretsToolbar}
+                onRowClick={handleSecretRowClick}
+                onScroll={handleSecretScroll}
+                onToolbarClick={handleToolbarClick}
+              />
+            ) : null}
+            {screen === "audit" ? (
+              <AuditScreen
+                entries={filteredAudit}
+                selectedIndex={selectedAudit}
+                filter={auditFilter}
+                auditDetail={auditDetail}
+                model={selectedAuditEntry !== null ? buildAuditDetailModelForTui(selectedAuditEntry) : null}
+                bodyFocused={region === "body"}
+                toolbarFocused={region === "toolbar"}
+                toolbarIndex={toolbarFocus}
+                toolbarButtons={auditToolbar}
+                onRowClick={handleAuditRowClick}
+                onScroll={handleAuditScroll}
+                onToolbarClick={handleToolbarClick}
+              />
+            ) : null}
+            {screen === "policies" ? (
+              <PoliciesScreen
+                secrets={filteredSecrets}
+                selectedIndex={selectedSecret}
+                selectedSecret={selectedSecretRow}
+                policyView={policyView}
+                strictMode={strictMode}
+                bodyFocused={region === "body"}
+                toolbarFocused={region === "toolbar"}
+                toolbarIndex={toolbarFocus}
+                toolbarButtons={policiesToolbar}
+                onRowClick={handleSecretRowClick}
+                onScroll={handleSecretScroll}
+                onToolbarClick={handleToolbarClick}
+              />
+            ) : null}
+          </>
+        )}
+        {toast !== null ? (
+          <Toast kind={toast.kind} text={toast.text} />
+        ) : null}
       </Box>
 
       <HelpBar hints={hints} />
@@ -2212,6 +2212,17 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
               isFieldFocused={d.focus.kind === "field" && fields[d.focus.index]?.id === "name" && !d.focus.onPaste}
               isPasteButtonFocused={d.focus.kind === "field" && fields[d.focus.index]?.id === "name" && d.focus.onPaste}
               showPasteButton
+              idPrefix="dialog-name"
+              onPasteClick={() => {
+                void doPaste((text) => {
+                  setDialog((prev) => {
+                    if (prev === null || prev.kind !== "add") {
+                      return prev;
+                    }
+                    return { ...prev, name: text.replace(/[\r\n]+$/u, "") };
+                  });
+                });
+              }}
               onChange={(name) => setDialog({ ...d, name })}
             />
           ) : null}
@@ -2222,6 +2233,17 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
             isFieldFocused={d.focus.kind === "field" && fields[d.focus.index]?.id === "value" && !d.focus.onPaste}
             isPasteButtonFocused={d.focus.kind === "field" && fields[d.focus.index]?.id === "value" && d.focus.onPaste}
             showPasteButton
+            idPrefix="dialog-value"
+            onPasteClick={() => {
+              void doPaste((text) => {
+                setDialog((prev) => {
+                  if (prev === null || (prev.kind !== "add" && prev.kind !== "rotate")) {
+                    return prev;
+                  }
+                  return { ...prev, value: text.replace(/[\r\n]+$/u, "") };
+                });
+              });
+            }}
             onChange={(value) => setDialog({ ...d, value })}
             hint={`hidden · ${String(d.value.length)} chars`}
           />

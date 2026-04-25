@@ -1,8 +1,9 @@
 import { Box, Text } from "ink";
 import TextInput from "ink-text-input";
-import type { ReactElement } from "react";
+import { useCallback, type ReactElement } from "react";
 import { theme } from "../theme.js";
 import { Button } from "./Button.js";
+import { useHitZone } from "../MouseContext.js";
 
 interface FormFieldProps {
   readonly label: string;
@@ -13,9 +14,17 @@ interface FormFieldProps {
   readonly showPasteButton: boolean;
   readonly onChange: (value: string) => void;
   readonly hint?: string;
+  readonly onPasteClick?: () => void;
+  readonly idPrefix?: string;
 }
 
 export function FormField(props: FormFieldProps): ReactElement {
+  const idPrefix = props.idPrefix ?? "field";
+  const onPasteClick = useCallback(() => props.onPasteClick?.(), [props]);
+  const pasteRef = useHitZone(`${idPrefix}:paste`, {
+    onClick: onPasteClick,
+    enabled: props.showPasteButton && props.onPasteClick !== undefined,
+  });
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Text color={props.isFieldFocused ? theme.accent : theme.dim}>
@@ -31,7 +40,7 @@ export function FormField(props: FormFieldProps): ReactElement {
           />
         </Box>
         {props.showPasteButton ? (
-          <Box marginLeft={1}>
+          <Box ref={pasteRef} marginLeft={1}>
             <Button
               label="Paste"
               focused={props.isPasteButtonFocused}

@@ -577,4 +577,123 @@ describe("TuiApp", () => {
     expect(frame).toMatch(/Tab|Esc|Enter/);
     app.unmount();
   });
+
+  it("replaces the screen body with the dialog when one is open so it stays on-screen", async () => {
+    const password = "tui-dialog-render-password";
+    const vaultPath = path.join(tmp, ".secretproxy.enc");
+    const handle = await createPopulatedGlobalVault(vaultPath, password, [
+      { name: "VISIBLE_ROW", value: "v" },
+    ]);
+    handle.close();
+    const harness = makeTestDeps({ cwd: tmp, homedir: tmp, password, keychainPopulated: true });
+    const app = render(<TuiApp deps={harness.deps} services={makeServices()} />);
+
+    await act(async () => {
+      await pause();
+    });
+
+    await openSecretsTab(app);
+
+    // Confirm the secrets list is visible before opening any dialog.
+    expect(app.lastFrame() ?? "").toContain("VISIBLE_ROW");
+
+    // Tab to toolbar, Enter on "+ Add secret" — opens the Add dialog.
+    await act(async () => {
+      app.stdin.write(K.tab);
+      await pause(10);
+      app.stdin.write(K.enter);
+      await pause(20);
+    });
+
+    const frame = app.lastFrame() ?? "";
+    // Dialog title is rendered. The Paste button is a dialog-only marker
+    // (only shown inside Add/Rotate dialogs alongside the Name/Value fields).
+    expect(frame).toContain("Add secret");
+    expect(frame).toContain("Paste");
+    // Screen body is suppressed while a dialog is open so the dialog
+    // can't be pushed off the bottom of the alt-screen by the body.
+    expect(frame).not.toContain("VISIBLE_ROW");
+
+    // Esc closes the dialog and restores the body.
+    await act(async () => {
+      app.stdin.write(K.esc);
+      await pause(20);
+    });
+    expect(app.lastFrame() ?? "").toContain("VISIBLE_ROW");
+    expect(app.lastFrame() ?? "").not.toContain("Paste");
+    app.unmount();
+  });
+
+  it("replaces the screen body with the command palette when Ctrl+K is pressed", async () => {
+    const password = "tui-palette-render-password";
+    const vaultPath = path.join(tmp, ".secretproxy.enc");
+    const handle = await createPopulatedGlobalVault(vaultPath, password, [
+      { name: "PALETTE_ROW", value: "v" },
+    ]);
+    handle.close();
+    const harness = makeTestDeps({ cwd: tmp, homedir: tmp, password, keychainPopulated: true });
+    const app = render(<TuiApp deps={harness.deps} services={makeServices()} />);
+
+    await act(async () => {
+      await pause();
+    });
+    await openSecretsTab(app);
+    expect(app.lastFrame() ?? "").toContain("PALETTE_ROW");
+
+    // Ctrl+K opens the palette.
+    await act(async () => {
+      app.stdin.write(""); // Ctrl+K
+      await pause(20);
+    });
+    const frame = app.lastFrame() ?? "";
+    expect(frame).toContain("Command palette");
+    expect(frame).not.toContain("PALETTE_ROW");
+
+    // Esc closes.
+    await act(async () => {
+      app.stdin.write(K.esc);
+      await pause(20);
+    });
+    expect(app.lastFrame() ?? "").toContain("PALETTE_ROW");
+    app.unmount();
+  });
+
+  it("Cancel is the default-focused button on the Delete dialog so a stray Enter is safe", async () => {
+    const password = "tui-delete-default-password";
+    const vaultPath = path.join(tmp, ".secretproxy.enc");
+    const handle = await createPopulatedGlobalVault(vaultPath, password, [
+      { name: "KEEP_ME", value: "v" },
+    ]);
+    handle.close();
+    const harness = makeTestDeps({ cwd: tmp, homedir: tmp, password, keychainPopulated: true });
+    const app = render(<TuiApp deps={harness.deps} services={makeServices()} />);
+
+    await act(async () => {
+      await pause();
+    });
+
+    await openSecretsTab(app);
+    // Tab to toolbar, → to Delete (index 2), Enter.
+    await act(async () => {
+      app.stdin.write(K.tab);
+      await pause(10);
+      app.stdin.write(K.right); // Rotate
+      await pause(5);
+      app.stdin.write(K.right); // Delete
+      await pause(5);
+      app.stdin.write(K.enter); // open Delete dialog
+      await pause(20);
+    });
+    expect(app.lastFrame() ?? "").toContain("Delete this secret?");
+
+    // A stray Enter at this point must NOT delete (Cancel must be focused).
+    await act(async () => {
+      app.stdin.write(K.enter);
+      await pause(40);
+    });
+    const reopened = await harness.deps.unlockVault(vaultPath, password);
+    expect(reopened.get("KEEP_ME")).toBe("v");
+    reopened.close();
+    app.unmount();
+  });
 });
