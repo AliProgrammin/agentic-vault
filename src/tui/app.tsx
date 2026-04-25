@@ -48,7 +48,13 @@ import {
   MouseProvider,
   type MouseContextValue,
 } from "./MouseContext.js";
-import { disableMouse, enableMouse, parseSgrMouse } from "./mouse.js";
+import {
+  disableAltScreen,
+  disableMouse,
+  enableAltScreen,
+  enableMouse,
+  parseSgrMouse,
+} from "./mouse.js";
 import { Button } from "./components/Button.js";
 import { CommandPalette, filterCommands, type PaletteCommand } from "./components/CommandPalette.js";
 import { Dialog } from "./components/Dialog.js";
@@ -2401,6 +2407,12 @@ export async function runTuiApp(deps: CliDeps, options: RunTuiOptions = {}): Pro
   const stdin = options.stdin ?? process.stdin;
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
+  // Alt-screen MUST be entered before render() so Ink paints into the alt
+  // buffer at terminal (1,1). Otherwise the banner gets written into the
+  // shell scrollback and the dashboard renders wherever the cursor sat.
+  if (stdout.isTTY === true) {
+    enableAltScreen(stdout);
+  }
   const instance = render(<TuiApp deps={deps} services={options.services ?? createDefaultTuiServices()} />, {
     stdin,
     stdout,
@@ -2417,6 +2429,7 @@ export async function runTuiApp(deps: CliDeps, options: RunTuiOptions = {}): Pro
     beforeSignal: () => {
       if (stdout.isTTY === true) {
         disableMouse(stdout);
+        disableAltScreen(stdout);
       }
     },
   });
@@ -2425,6 +2438,7 @@ export async function runTuiApp(deps: CliDeps, options: RunTuiOptions = {}): Pro
   } finally {
     if (stdout.isTTY === true) {
       disableMouse(stdout);
+      disableAltScreen(stdout);
     }
     lifecycle.restore();
   }

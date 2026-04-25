@@ -3,15 +3,22 @@ export const ENABLE_MOUSE_TRACKING = "\x1b[?1000h";
 export const DISABLE_MOUSE_TRACKING = "\x1b[?1000l";
 export const DISABLE_SGR_MOUSE = "\x1b[?1006l";
 // Alt screen buffer — switches to a fresh screen that starts at (1,1).
-// Without this, Ink renders wherever the shell cursor was when the app
-// launched, which means mouse coordinates don't align with Ink's yoga-
-// computed layout (yoga is (0,0)-origin relative to Ink's render root).
-// Alt screen + subtracting 1 from mouse coords = yoga-space (0,0).
+// Must be entered BEFORE Ink's first render so content paints into the
+// alt buffer (and at terminal row 1) instead of the shell scrollback.
+// Mouse coordinates also rely on this: yoga is (0,0)-origin and terminal
+// mouse events are (1,1)-origin, so alt-screen + subtract-1 maps cleanly.
 export const ENABLE_ALT_SCREEN = "\x1b[?1049h";
 export const DISABLE_ALT_SCREEN = "\x1b[?1049l";
 
-export function enableMouse(stdout: NodeJS.WriteStream): void {
+export function enableAltScreen(stdout: NodeJS.WriteStream): void {
   stdout.write(ENABLE_ALT_SCREEN);
+}
+
+export function disableAltScreen(stdout: NodeJS.WriteStream): void {
+  stdout.write(DISABLE_ALT_SCREEN);
+}
+
+export function enableMouse(stdout: NodeJS.WriteStream): void {
   stdout.write(ENABLE_MOUSE_TRACKING);
   stdout.write(ENABLE_SGR_MOUSE);
 }
@@ -19,7 +26,6 @@ export function enableMouse(stdout: NodeJS.WriteStream): void {
 export function disableMouse(stdout: NodeJS.WriteStream): void {
   stdout.write(DISABLE_SGR_MOUSE);
   stdout.write(DISABLE_MOUSE_TRACKING);
-  stdout.write(DISABLE_ALT_SCREEN);
 }
 
 export interface MouseEvent {
