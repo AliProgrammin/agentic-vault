@@ -14,6 +14,13 @@ import {
   policyBadgeTokens,
   type TuiServices,
 } from "./app.js";
+import {
+  enumerateBindings,
+  getHelpHints,
+  matchesKey,
+  SYMBOL_LABELS,
+  type KeySymbol,
+} from "./keymap.js";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -25,6 +32,8 @@ const K = {
   left: "[D",
   tab: "\t",
   enter: "\r",
+  // Ctrl+T (0x14) — global "focus tabs" shortcut.
+  ctrlT: "",
   esc: "",
 };
 
@@ -527,6 +536,18 @@ describe("TuiApp", () => {
       await pause(20);
       app.stdin.write("*");
       await pause(10);
+      // Enter in a field advances focus (it never silently submits).
+      // Walk down to the actions row, then right to "Save" and Enter.
+      app.stdin.write(K.enter); // hosts → commands
+      await pause(5);
+      app.stdin.write(K.enter); // commands → env
+      await pause(5);
+      app.stdin.write(K.enter); // env → requests
+      await pause(5);
+      app.stdin.write(K.enter); // requests → window
+      await pause(5);
+      app.stdin.write(K.enter); // window → Save action
+      await pause(5);
       app.stdin.write(K.enter); // submit
       await pause(30);
     });
@@ -544,7 +565,10 @@ describe("TuiApp", () => {
     expect(reopened.getRecord("CHOICE")?.policy).toBeUndefined();
     reopened.close();
 
-    // Submit again then Save anyway (index 2).
+    // After "Keep editing" the dialog reopens with focus already on the
+    // Save action button (state preserved from the prior submit), so a
+    // single Enter re-triggers the wildcard confirm; then → → Enter
+    // picks "Save anyway".
     await act(async () => {
       app.stdin.write(K.enter); // re-submit wildcard
       await pause(30);
@@ -695,5 +719,522 @@ describe("TuiApp", () => {
     expect(reopened.get("KEEP_ME")).toBe("v");
     reopened.close();
     app.unmount();
+  });
+
+  // -------- Feature 16: Arrow-first navigation tests --------
+
+  it("F16: ↑ at the top of a list wraps focus to the tab bar", async () => {
+    const password = "tui-f16-uplist-password";
+    const vaultPath = path.join(tmp, ".secretproxy.enc");
+    const handle = await createPopulatedGlobalVault(vaultPath, password, [
+      { name: "ROW_A", value: "v" },
+    ]);
+    handle.close();
+    const harness = makeTestDeps({ cwd: tmp, homedir: tmp, password, keychainPopulated: true });
+    const app = render(<TuiApp deps={harness.deps} services={makeServices()} />);
+    await act(async () => {
+      await pause();
+    });
+    await openSecretsTab(app);
+    // Body region, list focused at row 0. ↑ wraps to tabs.
+    await act(async () => {
+      app.stdin.write(K.up);
+      await pause(20);
+    });
+    const frame = app.lastFrame() ?? "";
+    // Tab focus indicator: focused active tab uses ▸ markers.
+    expect(frame).toContain("▸ Secrets ◂");
+    app.unmount();
+  });
+
+  it("F16: Ctrl+T from inside a dialog focuses the tab bar in one keypress", async () => {
+    const password = "tui-f16-ctrlt-password";
+    const vaultPath = path.join(tmp, ".secretproxy.enc");
+    const handle = await createPopulatedGlobalVault(vaultPath, password, [
+      { name: "ROW_A", value: "v" },
+    ]);
+    handle.close();
+    const harness = makeTestDeps({ cwd: tmp, homedir: tmp, password, keychainPopulated: true });
+    const app = render(<TuiApp deps={harness.deps} services={makeServices()} />);
+    await act(async () => {
+      await pause();
+    });
+    await openSecretsTab(app);
+    // Open the Add dialog from the toolbar.
+    await act(async () => {
+      app.stdin.write(K.tab); // body → toolbar
+      await pause(10);
+      app.stdin.write(K.enter); // open Add
+      await pause(20);
+    });
+    // Dialog open marker: the masked "Value" hint with "hidden · 0 chars".
+    expect(app.lastFrame() ?? "").toContain("hidden · 0 chars");
+
+    // Ctrl+T from inside the dialog → tabs focused, dialog closed.
+    await act(async () => {
+      app.stdin.write(K.ctrlT);
+      await pause(20);
+    });
+    const frame = app.lastFrame() ?? "";
+    // The dialog's hidden-chars hint must be gone — i.e. the dialog
+    // is closed even though the toolbar still advertises "+ Add secret".
+    expect(frame).not.toContain("hidden · 0 chars");
+    expect(frame).toContain("▸ Secrets ◂");
+    app.unmount();
+  });
+
+  it("F16: Ctrl+T from the audit detail panel focuses tabs", async () => {
+    const password = "tui-f16-ctrlt-detail-password";
+    const vaultPath = path.join(tmp, ".secretproxy.enc");
+    const handle = await createPopulatedGlobalVault(vaultPath, password, []);
+    handle.close();
+    const harness = makeTestDeps({ cwd: tmp, homedir: tmp, password, keychainPopulated: true });
+    const event: AuditEvent = {
+      ts: "2026-04-21T11:30:00.000Z",
+      secret_name: "DETAIL_X",
+      tool: "http_request",
+      target: "api.example.com",
+      outcome: "allowed",
+      request_id: "req-d",
+      caller_cwd: tmp,
+    };
+    const app = render(
+      <TuiApp
+        deps={harness.deps}
+        services={makeServices({ readAuditLog: async () => [event] })}
+      />,
+    );
+    await act(async () => {
+      await pause();
+    });
+    await openAuditTab(app);
+    // Drill into detail.
+    await act(async () => {
+      app.stdin.write(K.enter);
+      await pause(20);
+    });
+    expect(app.lastFrame() ?? "").toContain("← Back");
+    await act(async () => {
+      app.stdin.write(K.ctrlT);
+      await pause(20);
+    });
+    const frame = app.lastFrame() ?? "";
+    expect(frame).not.toContain("← Back");
+    expect(frame).toContain("▸ Audit ◂");
+    app.unmount();
+  });
+
+  it("F16: audit detail closes on ← and on ↑ in addition to Esc", async () => {
+    const password = "tui-f16-detail-close-password";
+    const vaultPath = path.join(tmp, ".secretproxy.enc");
+    const handle = await createPopulatedGlobalVault(vaultPath, password, []);
+    handle.close();
+    const harness = makeTestDeps({ cwd: tmp, homedir: tmp, password, keychainPopulated: true });
+    const event: AuditEvent = {
+      ts: "2026-04-21T11:30:00.000Z",
+      secret_name: "AD_CLOSE",
+      tool: "http_request",
+      target: "api.example.com",
+      outcome: "allowed",
+      request_id: "req-c",
+      caller_cwd: tmp,
+    };
+    const services = makeServices({ readAuditLog: async () => [event] });
+
+    for (const closeKey of [K.left, K.up, K.esc] as const) {
+      const app = render(<TuiApp deps={harness.deps} services={services} />);
+      await act(async () => {
+        await pause();
+      });
+      await openAuditTab(app);
+      await act(async () => {
+        app.stdin.write(K.enter); // open detail
+        await pause(20);
+      });
+      // The detail panel's "← Back" toolbar button is the most reliable
+      // marker of the detail-panel mode (the body title can wrap in
+      // narrow buffers).
+      expect(app.lastFrame() ?? "").toContain("← Back");
+      await act(async () => {
+        app.stdin.write(closeKey);
+        await pause(20);
+      });
+      expect(app.lastFrame() ?? "").not.toContain("← Back");
+      app.unmount();
+    }
+  });
+
+  it("F16: Add dialog opens with caret + bold focus on the Name field on first paint", async () => {
+    const password = "tui-f16-initfocus-password";
+    const vaultPath = path.join(tmp, ".secretproxy.enc");
+    const handle = await createPopulatedGlobalVault(vaultPath, password, []);
+    handle.close();
+    const harness = makeTestDeps({ cwd: tmp, homedir: tmp, password, keychainPopulated: true });
+    const app = render(<TuiApp deps={harness.deps} services={makeServices()} />);
+    await act(async () => {
+      await pause();
+    });
+    await openSecretsTab(app);
+    await act(async () => {
+      app.stdin.write(K.tab); // body → toolbar
+      await pause(10);
+      app.stdin.write(K.enter); // open Add dialog
+      await pause(20);
+    });
+    const frame = app.lastFrame() ?? "";
+    expect(frame).toContain("Add secret");
+    // Name field is the first field; visible focus marker = "▶ Name".
+    expect(frame).toContain("▶ Name");
+    app.unmount();
+  });
+
+  it("F16: Filter dialog cycles ↑/↓ between field and actions, ←/→ between buttons", async () => {
+    const password = "tui-f16-filter-cycle-password";
+    const vaultPath = path.join(tmp, ".secretproxy.enc");
+    const handle = await createPopulatedGlobalVault(vaultPath, password, []);
+    handle.close();
+    const harness = makeTestDeps({ cwd: tmp, homedir: tmp, password, keychainPopulated: true });
+    const app = render(<TuiApp deps={harness.deps} services={makeServices()} />);
+    await act(async () => {
+      await pause();
+    });
+    await openSecretsTab(app);
+    await act(async () => {
+      app.stdin.write(K.tab); // toolbar
+      await pause(5);
+      // Move to Filter (last button index 6).
+      for (let i = 0; i < 6; i += 1) {
+        app.stdin.write(K.right);
+        await pause(2);
+      }
+      app.stdin.write(K.enter); // open Filter
+      await pause(20);
+    });
+    expect(app.lastFrame() ?? "").toContain("Filter secrets");
+    expect(app.lastFrame() ?? "").toContain("▶ Query");
+
+    // ↓ moves to actions row → Cancel focused (no caret on field anymore).
+    await act(async () => {
+      app.stdin.write(K.down);
+      await pause(10);
+    });
+    expect(app.lastFrame() ?? "").toContain("▶ Cancel");
+
+    // → cycles to Apply.
+    await act(async () => {
+      app.stdin.write(K.right);
+      await pause(10);
+    });
+    expect(app.lastFrame() ?? "").toContain("▶ Apply");
+
+    // ← cycles back to Cancel.
+    await act(async () => {
+      app.stdin.write(K.left);
+      await pause(10);
+    });
+    expect(app.lastFrame() ?? "").toContain("▶ Cancel");
+
+    // ↑ wraps back to the field.
+    await act(async () => {
+      app.stdin.write(K.up);
+      await pause(10);
+    });
+    expect(app.lastFrame() ?? "").toContain("▶ Query");
+    app.unmount();
+  });
+
+  it("F16: Policy dialog cycles every field with ↑/↓ and every button with ←/→", async () => {
+    const password = "tui-f16-policy-cycle-password";
+    const vaultPath = path.join(tmp, ".secretproxy.enc");
+    const handle = await createPopulatedGlobalVault(vaultPath, password, [
+      { name: "POL_TARGET", value: "v" },
+    ]);
+    handle.close();
+    const harness = makeTestDeps({ cwd: tmp, homedir: tmp, password, keychainPopulated: true });
+    const app = render(<TuiApp deps={harness.deps} services={makeServices()} />);
+    await act(async () => {
+      await pause();
+    });
+    await openPoliciesTab(app);
+    await act(async () => {
+      app.stdin.write(K.tab); // toolbar
+      await pause(10);
+      app.stdin.write(K.enter); // Edit policy
+      await pause(20);
+    });
+    // Sequence: hosts → commands → env → requests → window → actions.
+    const expectedOrder = [
+      "▶ Allowed HTTP hosts",
+      "▶ Allowed commands",
+      "▶ Allowed env vars",
+      "▶ Rate limit requests",
+      "▶ Rate limit window seconds",
+    ];
+    expect(app.lastFrame() ?? "").toContain(expectedOrder[0]);
+    for (let i = 1; i < expectedOrder.length; i += 1) {
+      await act(async () => {
+        app.stdin.write(K.down);
+        await pause(10);
+      });
+      expect(app.lastFrame() ?? "").toContain(expectedOrder[i] ?? "");
+    }
+    // ↓ once more → actions row, Cancel focused.
+    await act(async () => {
+      app.stdin.write(K.down);
+      await pause(10);
+    });
+    expect(app.lastFrame() ?? "").toContain("▶ Cancel");
+    // → cycles to Save.
+    await act(async () => {
+      app.stdin.write(K.right);
+      await pause(10);
+    });
+    expect(app.lastFrame() ?? "").toContain("▶ Save");
+    app.unmount();
+  });
+
+  it("F16: Delete dialog supports Tab/←/→ button cycling without dead keys", async () => {
+    const password = "tui-f16-delete-cycle-password";
+    const vaultPath = path.join(tmp, ".secretproxy.enc");
+    const handle = await createPopulatedGlobalVault(vaultPath, password, [
+      { name: "DEL_ME", value: "v" },
+    ]);
+    handle.close();
+    const harness = makeTestDeps({ cwd: tmp, homedir: tmp, password, keychainPopulated: true });
+    const app = render(<TuiApp deps={harness.deps} services={makeServices()} />);
+    await act(async () => {
+      await pause();
+    });
+    await openSecretsTab(app);
+    await act(async () => {
+      app.stdin.write(K.tab);
+      await pause(5);
+      app.stdin.write(K.right); // Rotate
+      await pause(2);
+      app.stdin.write(K.right); // Delete
+      await pause(2);
+      app.stdin.write(K.enter); // open Delete
+      await pause(20);
+    });
+    expect(app.lastFrame() ?? "").toContain("Delete this secret?");
+    expect(app.lastFrame() ?? "").toContain("▶ Cancel");
+    await act(async () => {
+      app.stdin.write(K.right);
+      await pause(10);
+    });
+    expect(app.lastFrame() ?? "").toContain("▶ Delete");
+    await act(async () => {
+      app.stdin.write(K.tab); // wraps back to Cancel
+      await pause(10);
+    });
+    expect(app.lastFrame() ?? "").toContain("▶ Cancel");
+    app.unmount();
+  });
+
+  it("F16: Bulk dialog ↑/↓ toggles scope and ←/→ cycles buttons", async () => {
+    const password = "tui-f16-bulk-cycle-password";
+    const vaultPath = path.join(tmp, ".secretproxy.enc");
+    const handle = await createPopulatedGlobalVault(vaultPath, password, []);
+    handle.close();
+    const harness = makeTestDeps({ cwd: tmp, homedir: tmp, password, keychainPopulated: true });
+    const app = render(<TuiApp deps={harness.deps} services={makeServices()} />);
+    await act(async () => {
+      await pause();
+    });
+    await openSecretsTab(app);
+    await act(async () => {
+      app.stdin.write(K.tab); // toolbar
+      await pause(5);
+      // Bulk import is at index 5 (0-based after Add(0), Rotate(1), Delete(2), Policy(3), CopyName(4), Bulk(5)).
+      for (let i = 0; i < 5; i += 1) {
+        app.stdin.write(K.right);
+        await pause(2);
+      }
+      app.stdin.write(K.enter);
+      await pause(20);
+    });
+    expect(app.lastFrame() ?? "").toContain("Bulk import secrets");
+    expect(app.lastFrame() ?? "").toContain("scope: global");
+    // ↑ toggles scope (no fields in this dialog).
+    await act(async () => {
+      app.stdin.write(K.up);
+      await pause(10);
+    });
+    expect(app.lastFrame() ?? "").toContain("scope: project");
+    // ←/→ cycle Cancel ↔ paste/preview/import.
+    await act(async () => {
+      app.stdin.write(K.left);
+      await pause(10);
+    });
+    expect(app.lastFrame() ?? "").toContain("▶ Cancel");
+    await act(async () => {
+      app.stdin.write(K.right);
+      await pause(10);
+    });
+    expect(app.lastFrame() ?? "").toContain("▶ Paste from clipboard");
+    app.unmount();
+  });
+
+  it("F16: Enter inside an Add-dialog text field advances focus and never silently submits", async () => {
+    const password = "tui-f16-enter-field-password";
+    const vaultPath = path.join(tmp, ".secretproxy.enc");
+    const handle = await createPopulatedGlobalVault(vaultPath, password, []);
+    handle.close();
+    const harness = makeTestDeps({ cwd: tmp, homedir: tmp, password, keychainPopulated: true });
+    const app = render(<TuiApp deps={harness.deps} services={makeServices()} />);
+    await act(async () => {
+      await pause();
+    });
+    await openSecretsTab(app);
+    await act(async () => {
+      app.stdin.write(K.tab);
+      await pause(5);
+      app.stdin.write(K.enter); // open Add
+      await pause(20);
+    });
+    // Name is focused; Enter must advance to the Value field — not save.
+    expect(app.lastFrame() ?? "").toContain("▶ Name");
+    await act(async () => {
+      app.stdin.write("MY_NAME");
+      await pause(10);
+      app.stdin.write(K.enter);
+      await pause(20);
+    });
+    const frame = app.lastFrame() ?? "";
+    // The dialog must still be open (not silently submitted) and Value
+    // is now the focused field.
+    expect(frame).toContain("Add secret");
+    expect(frame).toContain("▶ Value");
+    // No row should have been saved (vault still empty).
+    const reopened = await harness.deps.unlockVault(vaultPath, password);
+    expect(reopened.list().length).toBe(0);
+    reopened.close();
+    app.unmount();
+  });
+
+  it("F16: help bar text matches the keymap registry for each zone", async () => {
+    // The help bar text is rendered by HelpBar from getHelpHints(zone).
+    // Compare the rendered hint text to what the registry advertises so
+    // a drift between handler dispatch and help text is detectable.
+    const password = "tui-f16-help-bar-password";
+    const vaultPath = path.join(tmp, ".secretproxy.enc");
+    const handle = await createPopulatedGlobalVault(vaultPath, password, [
+      { name: "HB_ROW", value: "v" },
+    ]);
+    handle.close();
+    const harness = makeTestDeps({ cwd: tmp, homedir: tmp, password, keychainPopulated: true });
+    const app = render(<TuiApp deps={harness.deps} services={makeServices()} />);
+    await act(async () => {
+      await pause();
+    });
+
+    // Tabs zone: help bar should match getHelpHints("tabs").
+    await act(async () => {
+      app.stdin.write(K.esc); // body → tabs
+      await pause(20);
+    });
+    let frame = app.lastFrame() ?? "";
+    for (const hint of getHelpHints("tabs")) {
+      expect(frame).toContain(hint.key);
+      expect(frame).toContain(hint.label);
+    }
+
+    // Body zone (secrets list).
+    await openSecretsTab(app);
+    frame = app.lastFrame() ?? "";
+    for (const hint of getHelpHints("body")) {
+      expect(frame).toContain(hint.key);
+      expect(frame).toContain(hint.label);
+    }
+
+    // Toolbar zone.
+    await act(async () => {
+      app.stdin.write(K.tab); // body → toolbar
+      await pause(10);
+    });
+    frame = app.lastFrame() ?? "";
+    for (const hint of getHelpHints("toolbar")) {
+      expect(frame).toContain(hint.key);
+      expect(frame).toContain(hint.label);
+    }
+
+    // Add dialog zone.
+    await act(async () => {
+      app.stdin.write(K.enter); // open Add
+      await pause(20);
+    });
+    frame = app.lastFrame() ?? "";
+    for (const hint of getHelpHints("dialog:add")) {
+      expect(frame).toContain(hint.key);
+      expect(frame).toContain(hint.label);
+    }
+    app.unmount();
+  });
+
+  it("F16: every advertised binding in the keymap registry matches a real Ink key", () => {
+    // Drift guard: enumerate every (zone, symbol) pair declared in the
+    // registry and assert that the matcher recognises a synthetic Ink
+    // key descriptor for that symbol. This catches typos in the
+    // registry that would render a key in the help bar that no
+    // handler can ever fire.
+    for (const entry of enumerateBindings()) {
+      const { symbol } = entry;
+      let input = "";
+      const key: {
+        upArrow?: boolean;
+        downArrow?: boolean;
+        leftArrow?: boolean;
+        rightArrow?: boolean;
+        tab?: boolean;
+        return?: boolean;
+        escape?: boolean;
+        ctrl?: boolean;
+      } = {};
+      switch (symbol) {
+        case "up":
+          key.upArrow = true;
+          break;
+        case "down":
+          key.downArrow = true;
+          break;
+        case "left":
+          key.leftArrow = true;
+          break;
+        case "right":
+          key.rightArrow = true;
+          break;
+        case "tab":
+          key.tab = true;
+          break;
+        case "enter":
+          key.return = true;
+          break;
+        case "esc":
+          key.escape = true;
+          break;
+        case "ctrl+k":
+          key.ctrl = true;
+          input = "k";
+          break;
+        case "ctrl+t":
+          key.ctrl = true;
+          input = "t";
+          break;
+        case "ctrl+c":
+          key.ctrl = true;
+          input = "c";
+          break;
+      }
+      expect(matchesKey(symbol, input, key)).toBe(true);
+      expect(SYMBOL_LABELS[symbol]).toBeTruthy();
+    }
+    // Sanity: KeySymbol exhaustiveness — `enumerateBindings()` should
+    // reach this far without TypeScript issues.
+    const all: KeySymbol[] = [
+      "up", "down", "left", "right", "tab", "enter", "esc", "ctrl+k", "ctrl+t", "ctrl+c",
+    ];
+    for (const sym of all) {
+      expect(SYMBOL_LABELS[sym]).toBeTruthy();
+    }
   });
 });

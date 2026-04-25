@@ -64,6 +64,7 @@ import { TabBar, TAB_LABELS } from "./components/TabBar.js";
 import { type ToolbarButton } from "./components/Toolbar.js";
 import { Banner, printExitSignature } from "./components/Banner.js";
 import { Toast } from "./components/Toast.js";
+import { getHelpHints, type ZoneId } from "./keymap.js";
 import { DashboardScreen } from "./screens/DashboardScreen.js";
 import { SecretsScreen } from "./screens/SecretsScreen.js";
 import { AuditScreen } from "./screens/AuditScreen.js";
@@ -1017,7 +1018,8 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
             scope: selectedSecretRow.scope,
             name: selectedSecretRow.name,
             value: "",
-            focus: { kind: "field", index: 1, onPaste: false },
+            // Rotate dialog has a single field (value) at index 0.
+            focus: { kind: "field", index: 0, onPaste: false },
             error: null,
           });
           setRegion("dialog");
@@ -1344,7 +1346,8 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
             scope: selectedSecretRow.scope,
             name: selectedSecretRow.name,
             value: "",
-            focus: { kind: "field", index: 1, onPaste: false },
+            // Rotate dialog has a single field (value) at index 0.
+            focus: { kind: "field", index: 0, onPaste: false },
             error: null,
           });
           setRegion("dialog");
@@ -1451,6 +1454,32 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
       return;
     }
 
+    // Ctrl+T: global "focus tabs" shortcut. Works from every zone —
+    // including dialogs, palette, and audit detail — so the tab bar is
+    // always reachable in one keypress regardless of where focus sits.
+    // Closes any open dialog/palette/detail along the way (zeroizing
+    // any in-flight secret value) so we don't leak focus on stale UI.
+    if (key.ctrl === true && input === "t" && unlock === null) {
+      if (dialog !== null) {
+        if (dialog.kind === "add" || dialog.kind === "rotate") {
+          clearSecretValue();
+        } else if (dialog.kind === "bulk") {
+          clearBulkBuffer();
+        }
+        setDialog(null);
+      }
+      if (region === "palette") {
+        setPaletteQuery("");
+        setPaletteIndex(0);
+      }
+      if (auditDetail) {
+        setAuditDetail(false);
+      }
+      setRegion("tabs");
+      setTabFocus(Math.max(0, screenIndex));
+      return;
+    }
+
     // Unlock screen
     if (unlock !== null) {
       if (unlock.focusArea === "input") {
@@ -1549,6 +1578,11 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
       // Policy wildcard confirmation gate
       if (dialog.kind === "policy" && dialog.awaitingConfirm) {
         // actions row: Cancel, Keep editing, Save anyway
+        if (key.tab) {
+          const idx = dialog.focus.kind === "actions" ? dialog.focus.index : 0;
+          setDialog({ ...dialog, focus: { kind: "actions", index: (idx + 1) % 3 } });
+          return;
+        }
         if (key.leftArrow) {
           const idx = dialog.focus.kind === "actions" ? dialog.focus.index : 0;
           setDialog({ ...dialog, focus: { kind: "actions", index: Math.max(0, idx - 1) } });
@@ -1622,14 +1656,20 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
             }
             return;
           }
-          // field input, Enter submits full dialog (go to Save action) or advances
+          // field input — Enter advances to the *next text field*,
+          // skipping the inline Paste button (which is reachable via
+          // Tab/↓). Enter never silently submits: when there is no
+          // next field, focus jumps to the Save button so the user
+          // must press Enter again deliberately.
           if (key.return) {
-            // advance to next field; if no next, trigger save
-            const next = nextDialogFocus(dialog.focus, fields, actionCount);
-            if (next.kind === "actions") {
-              setDialog({ ...dialog, focus: { kind: "actions", index: 1 } }); // focus Save
+            const nextIndex = dialog.focus.index + 1;
+            if (nextIndex < fields.length) {
+              setDialog({
+                ...dialog,
+                focus: { kind: "field", index: nextIndex, onPaste: false },
+              });
             } else {
-              setDialog({ ...dialog, focus: next });
+              setDialog({ ...dialog, focus: { kind: "actions", index: 1 } });
             }
             return;
           }
@@ -1662,14 +1702,37 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
         return;
       }
 
-      // Bulk dialog
+      // Bulk dialog. Bulk has no text fields, only actions, so the
+      // unified nav model maps as follows:
+      //   - Tab cycles actions (acts like ↓ on the actions row).
+      //   - ↑/↓ toggle the scope (the only "field-like" knob in the
+      //     dialog) — this is the documented use of ↑/↓ here so they
+      //     are not silent dead keys.
+      //   - ←/→ move between Cancel and Paste/Preview/Import buttons.
       if (dialog.kind === "bulk") {
         const preview = dialog.preview;
         const actionCount = 2;
-        if (key.tab || key.downArrow || key.upArrow) {
+        if (key.tab) {
           setDialog({
             ...dialog,
-            focus: { kind: "actions", index: (dialog.focus.kind === "actions" ? (dialog.focus.index + 1) % actionCount : 0) },
+            focus: {
+              kind: "actions",
+              index:
+                dialog.focus.kind === "actions"
+                  ? (dialog.focus.index + 1) % actionCount
+                  : 0,
+            },
+          });
+          return;
+        }
+        if (key.upArrow || key.downArrow) {
+          setDialog({
+            ...dialog,
+            scope: dialog.scope === "global" ? "project" : "global",
+            focus:
+              dialog.focus.kind === "actions"
+                ? dialog.focus
+                : { kind: "actions", index: 1 },
           });
           return;
         }
@@ -1684,14 +1747,6 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
           setDialog({
             ...dialog,
             focus: { kind: "actions", index: Math.min(actionCount - 1, dialog.focus.index + 1) },
-          });
-          return;
-        }
-        // Scope toggle with up/down when focused on actions
-        if ((key.upArrow || key.downArrow) && dialog.focus.kind === "actions") {
-          setDialog({
-            ...dialog,
-            scope: dialog.scope === "global" ? "project" : "global",
           });
           return;
         }
@@ -1729,9 +1784,17 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
         return;
       }
 
-      // Delete dialog
+      // Delete dialog. No fields — only Cancel / Delete actions.
+      // Tab cycles actions so it's a synonym for ←/→ here.
       if (dialog.kind === "delete") {
         const actionCount = 2;
+        if (key.tab) {
+          setDialog({
+            ...dialog,
+            focus: { kind: "actions", index: (dialog.focus.index + 1) % actionCount },
+          });
+          return;
+        }
         if (key.leftArrow) {
           setDialog({
             ...dialog,
@@ -1800,9 +1863,17 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
           }
           return;
         }
-        // field focus — Enter submits
+        // field focus — Enter advances to the next field (or to the
+        // Save button when on the last field). Submit only fires when
+        // Enter is pressed on the actions row, so a stray Enter in a
+        // text field can never silently submit the form.
         if (key.return) {
-          void savePolicyDraft(dialog, false);
+          const next = nextDialogFocus(dialog.focus, fields, actionCount);
+          if (next.kind === "actions") {
+            setDialog({ ...dialog, focus: { kind: "actions", index: 1 } });
+          } else {
+            setDialog({ ...dialog, focus: next });
+          }
         }
         return;
       }
@@ -1856,14 +1927,10 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
           }
           return;
         }
+        // field focus — Enter advances to the Apply button. Submit
+        // only fires when Enter is pressed on the actions row.
         if (key.return) {
-          if (dialog.target === "secrets") {
-            setSecretFilter(dialog.value);
-          } else {
-            setAuditFilter(dialog.value);
-          }
-          setDialog(null);
-          setRegion("toolbar");
+          setDialog({ ...dialog, focus: { kind: "actions", index: 1 } });
         }
         return;
       }
@@ -1957,6 +2024,13 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
     // BODY region (per-screen)
     if (screen === "secrets") {
       if (key.upArrow) {
+        // ↑ at the top of the list wraps focus to the tab bar so the
+        // tabs are reachable in one keypress from anywhere in the body.
+        if (selectedSecret <= 0) {
+          setRegion("tabs");
+          setTabFocus(Math.max(0, screenIndex));
+          return;
+        }
         setSelectedSecret((i) => Math.max(0, i - 1));
         return;
       }
@@ -1976,17 +2050,23 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
     }
     if (screen === "audit") {
       if (auditDetail) {
-        if (key.upArrow) {
-          setSelectedAudit((i) => Math.max(0, i - 1));
-          return;
-        }
-        if (key.downArrow) {
-          setSelectedAudit((i) => Math.min(filteredAudit.length - 1, i + 1));
+        // ← and ↑ close the detail panel and return focus to the
+        // audit list. Esc still works (handled above). Down arrow
+        // is a no-op so it doesn't accidentally scroll past the
+        // detail panel when the user is reading it.
+        if (key.leftArrow || key.upArrow) {
+          setAuditDetail(false);
+          setRegion("body");
           return;
         }
         return;
       }
       if (key.upArrow) {
+        if (selectedAudit <= 0) {
+          setRegion("tabs");
+          setTabFocus(Math.max(0, screenIndex));
+          return;
+        }
         setSelectedAudit((i) => Math.max(0, i - 1));
         return;
       }
@@ -2007,6 +2087,11 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
     }
     if (screen === "policies") {
       if (key.upArrow) {
+        if (selectedSecret <= 0) {
+          setRegion("tabs");
+          setTabFocus(Math.max(0, screenIndex));
+          return;
+        }
         setSelectedSecret((i) => Math.max(0, i - 1));
         return;
       }
@@ -2020,7 +2105,12 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
         setSelectedSecret((i) => Math.min(lastIndex, i + 1));
       }
     }
-    // dashboard body: no-op
+    // Dashboard body: no menu, no toolbar. ↑ wraps focus back to the
+    // tab bar so tabs are reachable in one keypress here too.
+    if (screen === "dashboard" && key.upArrow) {
+      setRegion("tabs");
+      setTabFocus(Math.max(0, screenIndex));
+    }
   });
 
   // ============ RENDER ============
@@ -2105,55 +2195,31 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
       : session?.project?.handle;
   const strictMode = selectedPolicyHandle?.getStrictMode() === true;
 
-  const hints: readonly HelpHint[] = (() => {
+  // Help hints are derived from the keymap registry — single source of
+  // truth shared with the keyboard router. See `keymap.ts` and the
+  // truthfulness test in app.test.tsx.
+  const currentZone: ZoneId = (() => {
     if (region === "palette") {
-      return [
-        { key: "↑↓", label: "move" },
-        { key: "Enter", label: "run" },
-        { key: "Esc", label: "close" },
-      ];
+      return "palette";
     }
-    if (region === "dialog") {
-      return [
-        { key: "Tab", label: "next field" },
-        { key: "←→", label: "buttons" },
-        { key: "Enter", label: "activate" },
-        { key: "Esc", label: "cancel" },
-      ];
+    if (region === "dialog" && dialog !== null) {
+      if (dialog.kind === "policy" && dialog.awaitingConfirm) {
+        return "dialog:policy-confirm";
+      }
+      return `dialog:${dialog.kind}` as ZoneId;
     }
     if (region === "tabs") {
-      return [
-        { key: "←→", label: "tab" },
-        { key: "Enter", label: "open" },
-        { key: "Tab", label: "focus body" },
-        { key: "Ctrl+K", label: "palette" },
-        { key: "Ctrl+C", label: "quit" },
-      ];
+      return "tabs";
     }
     if (region === "toolbar") {
-      return [
-        { key: "←→", label: "button" },
-        { key: "Enter", label: "activate" },
-        { key: "Tab", label: "focus tabs" },
-        { key: "Esc", label: "back" },
-      ];
+      return "toolbar";
     }
-    // Body fallback. When a toolbar is available, surface the natural
-    // "↓ to actions" flow so users discover Add/Rotate/Delete without
-    // hunting for the Tab key.
-    const bodyHints: HelpHint[] = [
-      { key: "↑↓", label: "move" },
-      { key: "Enter", label: "select" },
-    ];
-    if (currentToolbar.length > 0) {
-      bodyHints.push({ key: "↓", label: "actions" });
+    if (screen === "audit" && auditDetail) {
+      return "audit-detail";
     }
-    bodyHints.push(
-      { key: "Esc", label: "back" },
-      { key: "Ctrl+K", label: "palette" },
-    );
-    return bodyHints;
+    return "body";
   })();
+  const hints: readonly HelpHint[] = getHelpHints(currentZone);
 
   return (
     <Box width={size.cols} height={size.rows} flexDirection="column">
@@ -2283,7 +2349,11 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
                   });
                 });
               }}
-              onChange={(name) => setDialog({ ...d, name })}
+              onChange={(name) =>
+                setDialog((prev) =>
+                  prev !== null && prev.kind === "add" ? { ...prev, name } : prev,
+                )
+              }
             />
           ) : null}
           <FormField
@@ -2304,7 +2374,13 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
                 });
               });
             }}
-            onChange={(value) => setDialog({ ...d, value })}
+            onChange={(value) =>
+              setDialog((prev) =>
+                prev !== null && (prev.kind === "add" || prev.kind === "rotate")
+                  ? { ...prev, value }
+                  : prev,
+              )
+            }
             hint={`hidden · ${String(d.value.length)} chars`}
           />
         </Dialog>
@@ -2423,7 +2499,11 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
             isFieldFocused={isField("hosts")}
             isPasteButtonFocused={false}
             showPasteButton={false}
-            onChange={(hostsText) => setDialog({ ...d, hostsText })}
+            onChange={(hostsText) =>
+              setDialog((prev) =>
+                prev !== null && prev.kind === "policy" ? { ...prev, hostsText } : prev,
+              )
+            }
           />
           <FormField
             label="Allowed commands"
@@ -2431,7 +2511,11 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
             isFieldFocused={isField("commands")}
             isPasteButtonFocused={false}
             showPasteButton={false}
-            onChange={(commandsText) => setDialog({ ...d, commandsText })}
+            onChange={(commandsText) =>
+              setDialog((prev) =>
+                prev !== null && prev.kind === "policy" ? { ...prev, commandsText } : prev,
+              )
+            }
           />
           <FormField
             label="Allowed env vars"
@@ -2439,7 +2523,11 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
             isFieldFocused={isField("env")}
             isPasteButtonFocused={false}
             showPasteButton={false}
-            onChange={(envText) => setDialog({ ...d, envText })}
+            onChange={(envText) =>
+              setDialog((prev) =>
+                prev !== null && prev.kind === "policy" ? { ...prev, envText } : prev,
+              )
+            }
           />
           <FormField
             label="Rate limit requests"
@@ -2447,7 +2535,11 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
             isFieldFocused={isField("requests")}
             isPasteButtonFocused={false}
             showPasteButton={false}
-            onChange={(requestsText) => setDialog({ ...d, requestsText })}
+            onChange={(requestsText) =>
+              setDialog((prev) =>
+                prev !== null && prev.kind === "policy" ? { ...prev, requestsText } : prev,
+              )
+            }
           />
           <FormField
             label="Rate limit window seconds"
@@ -2455,7 +2547,11 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
             isFieldFocused={isField("window")}
             isPasteButtonFocused={false}
             showPasteButton={false}
-            onChange={(windowText) => setDialog({ ...d, windowText })}
+            onChange={(windowText) =>
+              setDialog((prev) =>
+                prev !== null && prev.kind === "policy" ? { ...prev, windowText } : prev,
+              )
+            }
           />
         </Dialog>
       );
@@ -2487,7 +2583,11 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
           isFieldFocused={d.focus.kind === "field"}
           isPasteButtonFocused={false}
           showPasteButton={false}
-          onChange={(value) => setDialog({ ...d, value })}
+          onChange={(value) =>
+            setDialog((prev) =>
+              prev !== null && prev.kind === "filter" ? { ...prev, value } : prev,
+            )
+          }
         />
       </Dialog>
     );

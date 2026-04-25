@@ -27,8 +27,8 @@ export function FormField(props: FormFieldProps): ReactElement {
   });
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Text color={props.isFieldFocused ? theme.accent : theme.dim}>
-        {props.label}
+      <Text color={props.isFieldFocused ? theme.accent : theme.dim} bold={props.isFieldFocused}>
+        {props.isFieldFocused ? `▶ ${props.label}` : `  ${props.label}`}
       </Text>
       <Box flexDirection="row">
         <Box flexGrow={1}>

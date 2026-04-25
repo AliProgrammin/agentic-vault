@@ -11,11 +11,14 @@ export interface ButtonProps {
 
 export function Button(props: ButtonProps): ReactElement {
   const variant = props.variant ?? "default";
-  const label = `  ${props.label}  `;
+  // Caret marker for focused buttons. The marker is part of the visible
+  // label so screen-buffer assertions can detect it; it pairs with the
+  // bold weight already applied below for a "caret + bold" indicator.
+  const label = props.focused ? `▶ ${props.label}  ` : `  ${props.label}  `;
   if (props.disabled === true) {
     return (
       <Text backgroundColor={theme.backgroundPanel} color={theme.textMuted}>
-        {label}
+        {`  ${props.label}  `}
       </Text>
     );
   }
