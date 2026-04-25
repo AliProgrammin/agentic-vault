@@ -9,8 +9,8 @@ import { theme } from "../theme.js";
 export function Banner(): ReactElement {
   return (
     <Box flexDirection="column" alignItems="flex-start">
-      <BigText text="AGENTIC" font="3d" colors={[theme.primary]} space={false} />
-      <BigText text="VAULT" font="3d" colors={[theme.primary]} space={false} />
+      <BigText text="AGENTIC" font="huge" colors={[theme.primary]} space={false} />
+      <BigText text="VAULT" font="huge" colors={[theme.primary]} space={false} />
       <Box marginTop={1} paddingLeft={1}>
         <Text color={theme.textMuted}>by madhoob.dev</Text>
       </Box>
