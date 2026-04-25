@@ -56,6 +56,7 @@ import { FormField } from "./components/FormField.js";
 import { HelpBar, type HelpHint } from "./components/HelpBar.js";
 import { TabBar, TAB_LABELS } from "./components/TabBar.js";
 import { type ToolbarButton } from "./components/Toolbar.js";
+import { Banner } from "./components/Banner.js";
 import { Toast } from "./components/Toast.js";
 import { DashboardScreen } from "./screens/DashboardScreen.js";
 import { SecretsScreen } from "./screens/SecretsScreen.js";
@@ -1915,14 +1916,23 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
 
   // ============ RENDER ============
   if (loading) {
-    return <Text color={theme.dim}>Loading...</Text>;
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Banner />
+        <Box marginTop={1}>
+          <Text color={theme.dim}>Loading...</Text>
+        </Box>
+      </Box>
+    );
   }
 
   if (unlock !== null) {
     const isNew = !unlock.hasVault;
     return (
-      <Box justifyContent="center" alignItems="center" flexDirection="column">
+      <Box flexDirection="column" padding={1}>
+        <Banner />
         <Box
+          marginTop={1}
           borderStyle="round"
           borderColor={theme.border}
           flexDirection="column"
