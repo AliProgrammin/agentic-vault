@@ -62,7 +62,7 @@ import { FormField } from "./components/FormField.js";
 import { HelpBar, type HelpHint } from "./components/HelpBar.js";
 import { TabBar, TAB_LABELS } from "./components/TabBar.js";
 import { type ToolbarButton } from "./components/Toolbar.js";
-import { Banner } from "./components/Banner.js";
+import { Banner, printExitSignature } from "./components/Banner.js";
 import { Toast } from "./components/Toast.js";
 import { DashboardScreen } from "./screens/DashboardScreen.js";
 import { SecretsScreen } from "./screens/SecretsScreen.js";
@@ -581,6 +581,44 @@ function nextDialogFocus(
     return { kind: "field", index: 0, onPaste: false };
   }
   return { kind: "actions", index: 0 };
+}
+
+function prevDialogFocus(
+  focus: DialogFocus,
+  fields: readonly FieldSpec[],
+  actionCount: number,
+): DialogFocus {
+  if (focus.kind === "actions") {
+    if (focus.index > 0) {
+      return { kind: "actions", index: focus.index - 1 };
+    }
+    if (fields.length > 0) {
+      const last = fields[fields.length - 1];
+      return {
+        kind: "field",
+        index: fields.length - 1,
+        onPaste: last !== undefined && last.hasPaste,
+      };
+    }
+    return { kind: "actions", index: 0 };
+  }
+  // field
+  if (focus.onPaste) {
+    return { kind: "field", index: focus.index, onPaste: false };
+  }
+  if (focus.index > 0) {
+    const prev = fields[focus.index - 1];
+    return {
+      kind: "field",
+      index: focus.index - 1,
+      onPaste: prev !== undefined && prev.hasPaste,
+    };
+  }
+  // wrap to last action
+  if (actionCount > 0) {
+    return { kind: "actions", index: actionCount - 1 };
+  }
+  return focus;
 }
 
 // ---------------------------------------------------------------------
@@ -1542,10 +1580,17 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
       if (dialog.kind === "add" || dialog.kind === "rotate") {
         const fields = addDialogFields(dialog as AddDialogState);
         const actionCount = 2; // Cancel, Save
-        if (key.tab) {
+        if (key.tab || key.downArrow) {
           setDialog({
             ...dialog,
             focus: nextDialogFocus(dialog.focus, fields, actionCount),
+          });
+          return;
+        }
+        if (key.upArrow) {
+          setDialog({
+            ...dialog,
+            focus: prevDialogFocus(dialog.focus, fields, actionCount),
           });
           return;
         }
@@ -1621,7 +1666,7 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
       if (dialog.kind === "bulk") {
         const preview = dialog.preview;
         const actionCount = 2;
-        if (key.tab) {
+        if (key.tab || key.downArrow || key.upArrow) {
           setDialog({
             ...dialog,
             focus: { kind: "actions", index: (dialog.focus.kind === "actions" ? (dialog.focus.index + 1) % actionCount : 0) },
@@ -1716,10 +1761,17 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
       if (dialog.kind === "policy") {
         const fields = policyDialogFields;
         const actionCount = 2;
-        if (key.tab) {
+        if (key.tab || key.downArrow) {
           setDialog({
             ...dialog,
             focus: nextDialogFocus(dialog.focus, fields, actionCount),
+          });
+          return;
+        }
+        if (key.upArrow) {
+          setDialog({
+            ...dialog,
+            focus: prevDialogFocus(dialog.focus, fields, actionCount),
           });
           return;
         }
@@ -1758,10 +1810,18 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
       // Filter dialog
       if (dialog.kind === "filter") {
         const actionCount = 2;
-        if (key.tab) {
+        const filterFields: readonly FieldSpec[] = [{ id: "q", hasPaste: false }];
+        if (key.tab || key.downArrow) {
           setDialog({
             ...dialog,
-            focus: nextDialogFocus(dialog.focus, [{ id: "q", hasPaste: false }], actionCount),
+            focus: nextDialogFocus(dialog.focus, filterFields, actionCount),
+          });
+          return;
+        }
+        if (key.upArrow) {
+          setDialog({
+            ...dialog,
+            focus: prevDialogFocus(dialog.focus, filterFields, actionCount),
           });
           return;
         }
@@ -2461,23 +2521,30 @@ export async function runTuiApp(deps: CliDeps, options: RunTuiOptions = {}): Pro
   if (stdout.isTTY === true) {
     enableMouse(stdout);
   }
+  // Cleanup runs from either the signal path or the natural-exit path —
+  // whichever fires first wins, so the signature isn't printed twice.
+  let cleanedUp = false;
   const lifecycle = installTerminalLifecycle({
     stdin,
     processRef: options.processRef ?? process,
     onSignal: () => instance.unmount(),
     beforeSignal: () => {
-      if (stdout.isTTY === true) {
+      if (stdout.isTTY === true && !cleanedUp) {
+        cleanedUp = true;
         disableMouse(stdout);
         disableAltScreen(stdout);
+        printExitSignature(stdout);
       }
     },
   });
   try {
     await instance.waitUntilExit();
   } finally {
-    if (stdout.isTTY === true) {
+    if (stdout.isTTY === true && !cleanedUp) {
+      cleanedUp = true;
       disableMouse(stdout);
       disableAltScreen(stdout);
+      printExitSignature(stdout);
     }
     lifecycle.restore();
   }
