@@ -1,16 +1,22 @@
 import { Box, Text } from "ink";
-import BigText from "ink-big-text";
 import type { ReactElement } from "react";
 import { theme } from "../theme.js";
 
-// Two-line ASCII banner — fits inside an 80-col terminal because the cfonts
-// `3d` font is roughly 7 cols per glyph. "AGENTIC VAULT" on one line would
-// overflow.
+// Pre-rendered figlet "ANSI Shadow" output. Inlined as strings so the bundle
+// doesn't have to ship figlet's runtime + font files. Regenerate with:
+//   node -e "const f=require('figlet'); console.log(JSON.stringify(f.textSync('AGENTIC',{font:'ANSI Shadow'})))"
+const AGENTIC = " █████╗  ██████╗ ███████╗███╗   ██╗████████╗██╗ ██████╗\n██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝██║██╔════╝\n███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║   ██║██║     \n██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║   ██║██║     \n██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║   ██║╚██████╗\n╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚═╝ ╚═════╝";
+const VAULT = "██╗   ██╗ █████╗ ██╗   ██╗██╗  ████████╗\n██║   ██║██╔══██╗██║   ██║██║  ╚══██╔══╝\n██║   ██║███████║██║   ██║██║     ██║   \n╚██╗ ██╔╝██╔══██║██║   ██║██║     ██║   \n ╚████╔╝ ██║  ██║╚██████╔╝███████╗██║   \n  ╚═══╝  ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝   ";
+
 export function Banner(): ReactElement {
   return (
     <Box flexDirection="column" alignItems="flex-start">
-      <BigText text="AGENTIC" font="huge" colors={[theme.primary]} space={false} />
-      <BigText text="VAULT" font="huge" colors={[theme.primary]} space={false} />
+      {AGENTIC.split("\n").map((line, i) => (
+        <Text key={`a:${String(i)}`} color={theme.primary}>{line}</Text>
+      ))}
+      {VAULT.split("\n").map((line, i) => (
+        <Text key={`v:${String(i)}`} color={theme.primary}>{line}</Text>
+      ))}
       <Box marginTop={1} paddingLeft={1}>
         <Text color={theme.textMuted}>by madhoob.dev</Text>
       </Box>
