@@ -1859,6 +1859,12 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
         setToolbarFocus((i) => Math.min(currentToolbar.length - 1, i + 1));
         return;
       }
+      // Up arrow flows back into the list — feels natural since the toolbar
+      // visually sits below the list. Removes the need to discover Tab.
+      if (key.upArrow) {
+        setRegion("body");
+        return;
+      }
       if (key.return) {
         activateToolbar();
       }
@@ -1872,7 +1878,15 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
         return;
       }
       if (key.downArrow) {
-        setSelectedSecret((i) => Math.min(Math.max(0, filteredSecrets.length - 1), i + 1));
+        // At the last item (or empty list), flow down into the toolbar so
+        // the user can reach "+ Add secret" with just arrow keys.
+        const lastIndex = Math.max(0, filteredSecrets.length - 1);
+        if (selectedSecret >= lastIndex && currentToolbar.length > 0) {
+          setRegion("toolbar");
+          setToolbarFocus(0);
+          return;
+        }
+        setSelectedSecret((i) => Math.min(lastIndex, i + 1));
         return;
       }
       return;
@@ -1894,7 +1908,13 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
         return;
       }
       if (key.downArrow) {
-        setSelectedAudit((i) => Math.min(Math.max(0, filteredAudit.length - 1), i + 1));
+        const lastIndex = Math.max(0, filteredAudit.length - 1);
+        if (selectedAudit >= lastIndex && currentToolbar.length > 0) {
+          setRegion("toolbar");
+          setToolbarFocus(0);
+          return;
+        }
+        setSelectedAudit((i) => Math.min(lastIndex, i + 1));
         return;
       }
       if (key.return && selectedAuditEntry !== null) {
@@ -1908,7 +1928,13 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
         return;
       }
       if (key.downArrow) {
-        setSelectedSecret((i) => Math.min(Math.max(0, filteredSecrets.length - 1), i + 1));
+        const lastIndex = Math.max(0, filteredSecrets.length - 1);
+        if (selectedSecret >= lastIndex && currentToolbar.length > 0) {
+          setRegion("toolbar");
+          setToolbarFocus(0);
+          return;
+        }
+        setSelectedSecret((i) => Math.min(lastIndex, i + 1));
       }
     }
     // dashboard body: no-op
@@ -2029,13 +2055,21 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
         { key: "Esc", label: "back" },
       ];
     }
-    return [
+    // Body fallback. When a toolbar is available, surface the natural
+    // "↓ to actions" flow so users discover Add/Rotate/Delete without
+    // hunting for the Tab key.
+    const bodyHints: HelpHint[] = [
       { key: "↑↓", label: "move" },
       { key: "Enter", label: "select" },
-      { key: "Tab", label: "switch area" },
+    ];
+    if (currentToolbar.length > 0) {
+      bodyHints.push({ key: "↓", label: "actions" });
+    }
+    bodyHints.push(
       { key: "Esc", label: "back" },
       { key: "Ctrl+K", label: "palette" },
-    ];
+    );
+    return bodyHints;
   })();
 
   return (
