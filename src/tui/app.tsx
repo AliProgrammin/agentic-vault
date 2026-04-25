@@ -16,7 +16,7 @@ import { promises as fs, watch as fsWatch } from "node:fs";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import clipboard from "clipboardy";
-import { Box, render, Text, useApp, useInput } from "ink";
+import { Box, render, Text, useApp, useInput, useStdout } from "ink";
 import TextInput from "ink-text-input";
 import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import {
@@ -603,6 +603,21 @@ interface TuiAppInnerProps extends AppProps {
 
 function TuiAppInner(props: TuiAppInnerProps): ReactElement {
   const { exit } = useApp();
+  // Terminal dimensions, kept in sync with resize events so the centered
+  // fullscreen layout reflows when the user changes the window size.
+  const { stdout: outStream } = useStdout();
+  const [size, setSize] = useState({
+    cols: outStream.columns ?? 80,
+    rows: outStream.rows ?? 24,
+  });
+  useEffect(() => {
+    const onResize = (): void =>
+      setSize({ cols: outStream.columns ?? 80, rows: outStream.rows ?? 24 });
+    outStream.on("resize", onResize);
+    return () => {
+      outStream.off("resize", onResize);
+    };
+  }, [outStream]);
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [region, setRegion] = useState<Region>("tabs");
   const [tabFocus, setTabFocus] = useState(0);
@@ -1949,7 +1964,7 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
   // ============ RENDER ============
   if (loading) {
     return (
-      <Box flexDirection="column" padding={1}>
+      <Box width={size.cols} height={size.rows} flexDirection="column" alignItems="center" justifyContent="center">
         <Banner />
         <Box marginTop={1}>
           <Text color={theme.dim}>Loading...</Text>
@@ -1961,7 +1976,7 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
   if (unlock !== null) {
     const isNew = !unlock.hasVault;
     return (
-      <Box flexDirection="column" padding={1}>
+      <Box width={size.cols} height={size.rows} flexDirection="column" alignItems="center" justifyContent="center">
         <Banner />
         <Box
           marginTop={1}
@@ -2079,13 +2094,14 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
   })();
 
   return (
-    <Box flexDirection="column">
+    <Box width={size.cols} height={size.rows} flexDirection="column">
       <TabBar
         activeIndex={Math.max(0, screenIndex)}
         focusedIndex={tabFocus}
         isFocused={region === "tabs"}
         onTabClick={handleTabClick}
       />
+      <Box flexGrow={1} flexDirection="column">
 
       {screen === "dashboard" && snapshot !== null ? (
         <DashboardScreen dashboard={snapshot.dashboard} audit={snapshot.audit} />
@@ -2164,6 +2180,7 @@ function TuiAppInner(props: TuiAppInnerProps): ReactElement {
       {toast !== null ? (
         <Toast kind={toast.kind} text={toast.text} />
       ) : null}
+      </Box>
 
       <HelpBar hints={hints} />
     </Box>
