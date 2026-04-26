@@ -376,28 +376,6 @@
     .card p{color:#9ca3af;font-size:14px;line-height:1.6}
     .card code{font-family:"JetBrains Mono",monospace;font-size:12.5px;color:#a78bfa;background:rgba(167,139,250,.08);padding:1px 6px;border-radius:4px}
 
-    .flow{
-      display:grid;grid-template-columns:repeat(3,1fr);gap:18px;
-      max-width:960px;margin:0 auto;position:relative;
-    }
-    @media(max-width:760px){.flow{grid-template-columns:1fr}}
-    .flow-node{
-      position:relative;padding:30px;border-radius:16px;
-      background:#0c0d14;border:1px solid #17181f;
-    }
-    .flow-num{
-      font-family:"JetBrains Mono",monospace;font-size:11px;color:#6366f1;
-      margin-bottom:14px;letter-spacing:.15em;font-weight:500;
-    }
-    .flow-node h4{font-size:17px;margin-bottom:10px;letter-spacing:-.01em}
-    .flow-node p{font-size:14px;color:#9ca3af;line-height:1.6}
-    .flow-node:nth-child(2){
-      border-color:rgba(99,102,241,.3);
-      box-shadow:0 0 50px -10px rgba(99,102,241,.35);
-      background:linear-gradient(180deg,#0e0f18,#0c0d14);
-    }
-    .flow-node code{font-family:"JetBrains Mono",monospace;color:#a78bfa;font-size:12.5px}
-
     .cta-block{
       text-align:center;padding:80px 40px;
       background:
@@ -470,7 +448,6 @@
       <div class="links">
         <a href="#problem">Problem</a>
         <a href="#features">Features</a>
-        <a href="#how">How it works</a>
         <a href="#where-it-sits">Integrations</a>
         <a href="#demo">Demo</a>
         <a class="cta-ghost" href="https://github.com/AliProgrammin/agentic-vault">GitHub</a>
@@ -484,7 +461,7 @@
         <p class="hero-sub">The secrets gateway built for AI coding agents. Policy-enforced injection into HTTP calls and subprocesses, encrypted audit trail, zero plaintext exposure to the model — ever.</p>
         <div class="cta-row">
           <a class="cta-primary" href="https://github.com/AliProgrammin/agentic-vault">View on GitHub <span style="font-size:16px">→</span></a>
-          <a class="cta-secondary" href="#how">See how it works</a>
+          <a class="cta-secondary" href="#features">See how it works</a>
         </div>
       </div>
       <div class="hero-3d">
@@ -566,30 +543,6 @@
           <div class="card-icon">06</div>
           <h3>Scoped vaults</h3>
           <p>Global + per-project override, gitignore-aware discovery. One binary, zero cloud, no telemetry.</p>
-        </div>
-      </div>
-    </section>
-
-    <section id="how">
-      <div class="section-head">
-        <div class="section-tag">The flow</div>
-        <h2>Three steps. No model gets near a raw value.</h2>
-      </div>
-      <div class="flow">
-        <div class="flow-node">
-          <div class="flow-num">01 · AGENT</div>
-          <h4>Requests an action</h4>
-          <p>Claude, Cursor, Cline — any MCP client calls <code>http_request</code> with a secret <em>name</em>.</p>
-        </div>
-        <div class="flow-node">
-          <div class="flow-num">02 · VAULT</div>
-          <h4>Enforces + injects</h4>
-          <p>Policy check, rate-limit, unlock via keychain, token written into the outbound call.</p>
-        </div>
-        <div class="flow-node">
-          <div class="flow-num">03 · AUDIT</div>
-          <h4>Captures + scrubs</h4>
-          <p>Encrypted body store, scrub-at-persist and scrub-at-render, forensic detail view.</p>
         </div>
       </div>
     </section>
